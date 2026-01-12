@@ -9,41 +9,45 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 1. OPENROUTER (DEEPSEEK) İLE METİN YAZARLIĞI ---
-def rewrite_with_deepseek(original_text):
+def rewrite_with_deepseek(original_text, year=None):
     api_key = os.getenv("OPENROUTER_API_KEY") # GitHub'daki anahtarı alır
     if not api_key:
         print("UYARI: API Key bulunamadı, orijinal metin kullanılacak.")
-        return original_text, []
+        return [original_text], [], None
 
     # ADRES DEĞİŞTİ: Artık OpenRouter'a gidiyoruz
     url = "https://openrouter.ai/api/v1/chat/completions"
     
+    year_context = f" ({year} yılında gerçekleşti)" if year else ""
+    
     system_prompt = (
-        "Sen profesyonel bir sosyal medya yöneticisisin. Görevin, sana verilen tarihi olayı "
-        "Twitter (X) platformu için viral olacak, merak uyandırıcı ve etkileşim alacak bir formata dönüştürmektir. "
-        "\n\nKURALLAR:"
-        "\n1. Cevabın SADECE atılacak tweet metninden oluşmalıdır."
-        "\n2. ASLA 'İşte tweetiniz:', 'Revize edilmiş hali:' gibi giriş veya bitiş cümleleri yazma."
-        "\n3. Ansiklopedik dili bırak, samimi ve heyecanlı konuş."
-        "\n4. 1-2 adet emoji kullan."
-        "\n5. ZİNCİR (FLOOD) KURALI: Eğer konu tek tweete sığmayacak kadar derinse veya anlatılacak çok şey varsa, "
-        "tweetleri '---' (üç tire) işareti ile ayırarak birden fazla parça halinde yaz."
-        "\n6. Sadece ZİNCİRİN EN SON TWEETİNE takipçilerle etkileşim kuracak 2 veya 3 şıklı bir anket sorusu ekle."
-        "\n7. GÖRSEL PROMPT: En sona (metinden tamamen ayrı) bu olayı betimleyen, yapay zeka resim çizim aracı için İngilizce bir prompt yaz."
-        "\nFORMAT:"
-        "\n[Tweet 1]"
+        "Sen profesyonel bir tarihçi, editör ve sosyal medya uzmanısın. Görevin, sana verilen tarihi olayı "
+        "Twitter (X) platformu için EKSİKSİZ, DOĞRU ve ÇOK İLGİ ÇEKİCİ bir formata dönüştürmektir."
+        "\n\nGENEL İÇERİK POLİTİKASI:"
+        "\n- Sadece savaşları değil; BİLİM, SANAT, FUTBOL, FİNANS, EKONOMİ ve SİYASET tarihinden olayları da aynı heyecanla anlat."
+        "\n- Olayın popülerliğini ve bilindikligini göz önünde bulundurarak takipçilerin ilgisini çekecek detayları öne çıkar."
+        "\n\nKESİN KURALLAR:"
+        "\n1. DİL ve GRAMER: Türkçe yazım ve noktalama kurallarına %100 uy. Asla devrik veya düşük cümle kurma. Harf hatası yapma."
+        "\n2. TARİHSEL DOĞRULUK: Olayın yılını ve bağlamını asla karıştırma. Sana verilen metindeki yıl ile anlattığın olayın yılı tutarlı olsun."
+        "\n3. ÜSLUP: Ansiklopedik dilden kaçın. Hikayeleştirici, merak uyandırıcı ve samimi bir dil kullan."
+        "\n4. EMOJİ: Anlatımı güçlendirecek 1-2 emoji kullan (aşırıya kaçma)."
+        "\n5. ZİNCİR (FLOOD): Konu derin ve detaylıysa, LÜTFEN tweetleri '---' işareti ile bölerek zincir (thread) yap. Tek bir uzun tweet yerine akıcı bir hikaye anlat."
+        "\n6. ANKET: Sadece zincirin en sonunda, konuyla ilgili etkileşim artırıcı zekice bir anket sorusu sor."
+        "\n7. GÖRSEL PROMPT: En sona, olayı en iyi betimleyen İngilizce görsel promptunu yaz."
+        "\n8. SAKINCA: Halüsinasyon görme. Metinde olmayan bilgiyi varmış gibi anlatma."
+        "\n\nFORMAT:"
+        "\n[Tweet 1 Metni]"
         "\n---"
-        "\n[Tweet 2]"
-        "\nANKET: [Seçenek 1] | [Seçenek 2]"
-        "\nGORSEL_PROMPT: [English Image Description]"
-        "\n8. Her tweet parçasının uzunluğu (hashtagler dahil) 280 karakteri geçmesin."
+        "\n[Tweet 2 Metni...]"
+        "\nANKET: [Soru] | [Seçenek 1] | [Seçenek 2]"
+        "\nGORSEL_PROMPT: [Detailed English Image Prompt]"
     )
 
     payload = {
         "model": "deepseek/deepseek-chat", 
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Metin: {original_text}"}
+            {"role": "user", "content": f"Olay: {original_text}{year_context}\nBu tarihi olayı viral olacak, hatasız ve akıcı bir Türkçe ile revize et."}
         ],
         "stream": False
     }
@@ -173,7 +177,8 @@ def get_smart_event():
     print(f"Bugün paylaşılanlar: {len(used_events)} adet")
     
     # Tüm kategorilerden veri çekip havuz oluşturacağız
-    categories = ["events", "births", "deaths"]
+    # 'selected' kategorisi en bilinen olayları içerir
+    categories = ["selected", "events", "births", "deaths"]
     all_important_items = []
     all_items = []
     
@@ -199,20 +204,30 @@ def get_smart_event():
                         if item.get("text") in used_events:
                             continue
                             
+                        # 'Selected' kategorisine öncelik veriyoruz (Daha popüler)
+                        if cat == "selected":
+                           item["_priority"] = 2
+                        else:
+                           item["_priority"] = 1
+                           
                         all_items.append(item)
                         
                         # Önem Filtresi: Events için 4+, diğerleri için 2+ kaynak
                         min_pages = 4 if cat == "events" else 2
-                        if len(item.get("pages", [])) >= min_pages:
+                        
+                        # Selected zaten önemli olduğu için direkt ekle
+                        if cat == "selected" or len(item.get("pages", [])) >= min_pages:
                             all_important_items.append(item)
 
         if not all_items:
             print("Uygun (paylaşılmamış) içerik kalmadı!")
-            return None, None, []
+            return None, None, [], None
 
         # Seçim Yapma
+        # Önce önemli items arasından seç
         if all_important_items:
             print(f"Toplam {len(all_important_items)} önemli içerik bulundu.")
+            # Priority'ye göre ağırlıklı seçim yapılabilir ama şimdilik random
             selected_item = random.choice(all_important_items)
         else:
             print("Önemli içerik bulunamadı, genel havuzdan seçiliyor.")
@@ -224,18 +239,13 @@ def get_smart_event():
         raw_text = selected_item.get("text")
         
         # --- TARİHÇEYE KAYDET (Geçici değil, main'de başarılı olursa kaydedeceğiz ama burada text lazım) ---
-        # Tasarım kararı: get_smart_event sadece seçer. Kaydetme işi main'de tweet atılınca yapılır.
-        # Bu fonksiyon seçilen 'item'ı değil 'raw_text'i döndürüyor. Main raw_text'i de bilmeli mi? 
-        # Hayır, yapay zeka rewrite ediyor.
-        # Biz history'ye 'raw_text'i kaydetmeliyiz ki bir sonraki fetch'te duplicate'i bulabilelim.
-        # O yüzden return değerine raw_text'i de eklemeliyiz.
         
         # --- YAPAY ZEKA DOKUNUŞU ---
         print(f"Seçilen Kategori: {category} | Orijinal: {raw_text} | Yıl: {year}")
         tweet_parts, poll_options, image_prompt = rewrite_with_deepseek(raw_text, year)
         
         # Emoji Seçimi
-        emoji_map = {"events": "📅", "births": "🎂", "deaths": "🕊️"}
+        emoji_map = {"selected": "🌟", "events": "📅", "births": "🎂", "deaths": "🕊️"}
         header_emoji = emoji_map.get(category, "📅")
         
         final_tweets = []
@@ -250,94 +260,40 @@ def get_smart_event():
             first_tweet = f"{header_emoji} Tarihte Bugün ({day}.{month}.{year})\n\n{tweet_parts[0]} #tarih #tarihteneoldu (1/{len(tweet_parts)})"
             final_tweets.append(first_tweet)
             
-            # Diğer Tweetler
-            for idx, part in enumerate(tweet_parts[1:], start=2):
-                next_tweet = f"{part} ({idx}/{len(tweet_parts)})"
-                final_tweets.append(next_tweet)
-        
-        # Görsel Kontrolü
-        image_url = None
-        # Görsel Kontrolü
-        image_url = None
+            # 2...N. Tweetler
+            for i, part in enumerate(tweet_parts[1:], 2):
+                tweet_text = f"{part} ({i}/{len(tweet_parts)})"
+                final_tweets.append(tweet_text)
+                
+        # Görsel Kontrolü (Wikipedia)
+        final_image_url = None
         if selected_item.get("pages"):
             first_page = selected_item["pages"][0]
-            if "originalimage" in first_page:
-                image_url = first_page["originalimage"]["source"]
-            elif "thumbnail" in first_page:
-                image_url = first_page["thumbnail"]["source"]
-
-        return final_tweets, image_url, poll_options, raw_text
-
-    except Exception as e:
-        print(f"Veri çekme hatası: {e}")
-        return [], None, [], None
-
-# --- 4. ETKİLEŞİM (MENTION CEVAPLAMA) ---
-def generate_ai_reply(text):
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key: return "Teşekkürler! 🤖"
-    
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    system_prompt = (
-        "Sen samimi bir tarih botusun. Takipçinin mentionuna kısa, nazik ve esprili bir cevap ver. "
-        "Eğer bir tarih sorusuysa kısaca cevapla. Değilse teşekkür et."
-        "Maksimum 2 cümle."
-    )
-    
-    payload = {
-        "model": "deepseek/deepseek-chat",
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "HTTP-Referer": "https://github.com/kagandms", "X-Title": "TarihBot"}
-    
-    try:
-        r = requests.post(url, headers=headers, json=payload)
-        if r.status_code == 200:
-            content = r.json()['choices'][0]['message']['content'].strip()
-            return content.replace('"', '')
-    except:
-        pass
-    return "Teşekkürler! Tarihle kalın. 📜"
-
-def check_mentions_and_reply(client_v2, my_user_id):
-    print("🔔 Etkileşimler kontrol ediliyor...")
-    start_id = None
-    
-    # Son kalınan ID'yi oku
-    if os.path.exists("last_mention_id.txt"):
-        with open("last_mention_id.txt", "r") as f:
-            start_id = f.read().strip()
-            
-    try:
-        # Pagination param
-        params = {"id": my_user_id, "max_results": 10, "tweet_fields": ["id", "text", "author_id"]}
-        if start_id:
-            params["since_id"] = start_id
-            
-        mentions = client_v2.get_users_mentions(**params)
-        
-        if mentions.data:
-            new_last_id = start_id
-            for mention in reversed(mentions.data): # Eskiden yeniye
-                print(f"Yanıtlanıyor: {mention.id} - {mention.text}")
-                reply_text = generate_ai_reply(mention.text)
+            if first_page.get("thumbnail"):
+                final_image_url = first_page["thumbnail"]["source"]
+            elif first_page.get("originalimage"):
+                final_image_url = first_page["originalimage"]["source"]
                 
-                try:
-                    client_v2.create_tweet(text=f"@{mention.author_id} {reply_text}", in_reply_to_tweet_id=mention.id)
-                    new_last_id = mention.id
-                    print("Yanıt gönderildi.")
-                except Exception as e:
-                    print(f"Yanıt hatası: {e}")
-            
-            # Yeni ID'yi kaydet
-            if new_last_id:
-                with open("last_mention_id.txt", "w") as f:
-                    f.write(str(new_last_id))
-        else:
-            print("Yeni etkileşim yok.")
-            
+        # Görsel Kontrolü (Yapay Zeka - Pollinations.ai)
+        # Eğer wiki görseli yoksa VE yapay zeka bir prompt ürettiyse
+        if not final_image_url and image_prompt:
+            print(f"Wiki görseli yok, yapay zeka çizecek: {image_prompt}")
+            # Promptu URL dostu hale getir
+            safe_prompt = requests.utils.quote(image_prompt)
+            # Pollinations URL'i oluştur
+            final_image_url = f"https://pollinations.ai/p/{safe_prompt}?width=1024&height=1024&seed={random.randint(0, 999999)}&model=flux"
+        
+        return final_tweets, final_image_url, poll_options, raw_text
+
     except Exception as e:
-        print(f"Etkileşim işlem hatası: {e}")
+        print(f"Hata oluştu: {e}")
+        return None, None, [], None
+
+# --- 4. ETKİLEŞİM YÖNETİMİ (Yanıt Verme) ---
+# Ücretsiz sürümde mention okuma engellendiği için devre dışı bırakılmıştır.
+def check_mentions_and_reply(client, api_v1):
+     print("Mention kontrolü Free Tier API'de desteklenmiyor.")
+     pass
 
 def download_image(url):
     filename = "temp_image.jpg"
