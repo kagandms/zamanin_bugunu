@@ -1,4 +1,5 @@
 import tweepy
+from tweepy.errors import TooManyRequests
 import requests
 import os
 import random
@@ -366,6 +367,19 @@ def main():
                 print(f"Tweet {i+1}/{len(tweet_thread)} gönderildi! (Tam)")
                 sent_successfully = True
                 continue # Başarılı, sonraki tweete geç
+            except TooManyRequests as e:
+                print(f"❌ RATE LIMIT EXCEEDED (429): {e}")
+                
+                # Reset zamanını bul
+                reset_timestamp = None
+                if e.response is not None and 'x-rate-limit-reset' in e.response.headers:
+                    reset_timestamp = int(e.response.headers['x-rate-limit-reset'])
+                    reset_time = datetime.fromtimestamp(reset_timestamp).strftime('%H:%M:%S')
+                    print(f"⏳ API Reset Zamanı: {reset_time}")
+                
+                print("⚠️ Zincir kırıldı. Tekrar denenmeyecek (Rate Limit).")
+                break
+
             except Exception as e:
                 print(f"Hata (Tam): {e}")
 

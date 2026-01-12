@@ -1,4 +1,4 @@
-from main import get_smart_event, generate_ai_reply
+from main import get_smart_event
 import os
 from dotenv import load_dotenv
 
