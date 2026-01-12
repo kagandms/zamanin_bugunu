@@ -231,8 +231,8 @@ def get_smart_event():
         # O yüzden return değerine raw_text'i de eklemeliyiz.
         
         # --- YAPAY ZEKA DOKUNUŞU ---
-        print(f"Seçilen Kategori: {category} | Orijinal: {raw_text}")
-        tweet_parts, poll_options, image_prompt = rewrite_with_deepseek(raw_text)
+        print(f"Seçilen Kategori: {category} | Orijinal: {raw_text} | Yıl: {year}")
+        tweet_parts, poll_options, image_prompt = rewrite_with_deepseek(raw_text, year)
         
         # Emoji Seçimi
         emoji_map = {"events": "📅", "births": "🎂", "deaths": "🕊️"}
