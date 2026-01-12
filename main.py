@@ -448,8 +448,8 @@ def main():
                              print(f"Hata (Sadece Metin): {e3}")
                              break
                     else:
-                        break # Anket yoktu, medya yoktu, düz metin de gitmedi.
-        
+                        break
+
         # Başarıyla atıldıysa geçmişe kaydet
         if sent_successfully and raw_text:
             save_to_history(raw_text)
@@ -458,12 +458,11 @@ def main():
     else:
         print("İçerik bulunamadı.")
         
-    # Etkileşim Kontrolü (Free Tier API desteği olmadığı için devre dışı)
+    # Etkileşim Kontrolü (Devre dışı)
     # try:
     #     me = client_v2.get_me()
-    #     # ...
     # except Exception as e:
-    #     print(f"Kullanıcı ID hatası: {e}")
+    #     pass
 
 if __name__ == "__main__":
     main()
