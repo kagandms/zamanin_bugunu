@@ -342,7 +342,7 @@ def check_mentions_and_reply(client_v2, my_user_id):
 def download_image(url):
     filename = "temp_image.jpg"
     headers = {
-        'User-Agent': 'TarihBot/3.0 (https://github.com/kagandms/tarihte-bugun-botu; me@example.com)'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
         response = requests.get(url, headers=headers, stream=True)
