@@ -299,38 +299,58 @@ def check_mentions_and_reply(client, api_v1):
 
 def download_image(url):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
-    try:
-        response = requests.get(url, headers=headers, stream=True)
-        if response.status_code == 200:
-            content_type = response.headers.get('Content-Type')
-            extension = mimetypes.guess_extension(content_type)
-            if not extension:
-                # Fallback for common types if mimetypes fails
-                if 'jpeg' in content_type or 'jpg' in content_type:
-                    extension = '.jpg'
-                elif 'png' in content_type:
-                    extension = '.png'
-                elif 'webp' in content_type:
-                    extension = '.webp'
-                else:
-                    extension = '.jpg' # Default fallback
+    
+    # 3 Kez Deneme Hakkı (Retry)
+    max_retries = 3
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, stream=True, timeout=10)
             
-            # Ensure extension exists
-            if not extension: 
-                extension = ".jpg"
+            if response.status_code == 200:
+                content_type = response.headers.get('Content-Type')
+                extension = mimetypes.guess_extension(content_type)
+                
+                # Fallback uzantı kontrolü
+                if not extension:
+                    if 'jpeg' in content_type or 'jpg' in content_type:
+                        extension = '.jpg'
+                    elif 'png' in content_type:
+                        extension = '.png'
+                    elif 'webp' in content_type:
+                        extension = '.webp'
+                    else:
+                        extension = '.jpg' 
+                
+                # Temizlik
+                if extension == '.jpe': extension = '.jpg'
 
-            filename = f"temp_image{extension}"
+                filename = f"temp_image{extension}"
+                
+                with open(filename, 'wb') as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+                return filename
             
-            with open(filename, 'wb') as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
-            return filename
-        else:
-            print(f"Resim indirilemedi. Status Code: {response.status_code}")
-    except Exception as e:
-        print(f"Resim indirme hatası: {e}")
+            elif response.status_code == 429:
+                print(f"⚠️ Hata 429 (Too Many Requests) - Deneme {attempt+1}/{max_retries}. Bekleniyor...")
+                time.sleep(2 * (attempt + 1)) # Artan bekleme süresi (2s, 4s...)
+                continue
+                
+            else:
+                print(f"Resim indirilemedi. Status Code: {response.status_code}")
+                # 404 gibi ciddi hatalarda direkt çık
+                if response.status_code in [404, 403]:
+                    break
+        
+        except Exception as e:
+            print(f"Resim indirme hatası (Deneme {attempt+1}): {e}")
+            time.sleep(1)
+            
+    print("❌ Tüm denemeler başarısız. Görsel indirilemedi.")
     return None
 
 def main():
