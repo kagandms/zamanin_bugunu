@@ -14,8 +14,16 @@ load_dotenv()
 def rewrite_with_deepseek(original_text, year=None):
     api_key = os.getenv("OPENROUTER_API_KEY") # GitHub'daki anahtarı alır
     if not api_key:
-        print("UYARI: API Key bulunamadı, orijinal metin kullanılacak.")
+        print("UYARI: API Key bulunamadı (Environment Variable boş), orijinal metin kullanılacak.")
         return [original_text], [], None
+    
+    # DEBUG: Key kontrolü (Güvenli)
+    print(f"DEBUG: OpenRouter Key yüklendi. Uzunluk: {len(api_key)}")
+    print(f"DEBUG: Key Başlangıcı: {api_key[:5]}...")
+    if api_key.strip() != api_key:
+       print("UYARI: Key içinde boşluk karakterleri tespit edildi! Temizleniyor...")
+       api_key = api_key.strip()
+
 
     # ADRES DEĞİŞTİ: Artık OpenRouter'a gidiyoruz
     url = "https://openrouter.ai/api/v1/chat/completions"
