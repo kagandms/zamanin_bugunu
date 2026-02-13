@@ -4,6 +4,7 @@ import requests
 import os
 import random
 import re
+import time
 import mimetypes
 import unicodedata
 from datetime import datetime
@@ -152,6 +153,10 @@ def rewrite_with_deepseek(original_text, year=None):
             # İçerik Temizliği
             content = content.replace('"', '').replace("'", "")
             
+            # AI Prefix Temizliği ("[Tweet 1]", "Tweet 1:", "Tweet 1 -" vb.)
+            content = re.sub(r'\[?Tweet\s*\d+\]?[:\-–—]?\s*', '', content, flags=re.IGNORECASE)
+            content = content.strip()
+            
             # Değişkenler
             tweet_parts = []
             poll_options = []
@@ -170,6 +175,8 @@ def rewrite_with_deepseek(original_text, year=None):
                 raw_poll = split_poll[1].strip()
                 poll_options = [opt.strip() for opt in raw_poll.split("|") if opt.strip()]
                 poll_options = poll_options[:4]  # Twitter max 4 seçenek destekler
+                # Twitter anket seçenekleri max 25 karakter
+                poll_options = [opt[:25] for opt in poll_options]
             else:
                 content_text = content
             
@@ -407,20 +414,38 @@ def get_smart_event():
         year_str = str(year) if year else "?"
         
         final_tweets = []
+        header = f"{header_emoji} Tarihte Bugün ({day}.{month}.{year_str})"
+        hashtags = "#tarih #tarihteneoldu"
         
         if len(tweet_parts) == 1:
             # Tek Tweet
-            text = f"{header_emoji} Tarihte Bugün ({day}.{month}.{year_str})\n\n{tweet_parts[0]} #tarih #tarihteneoldu"
+            text = f"{header}\n\n{tweet_parts[0]} {hashtags}"
+            # Karakter limiti kontrolü
+            if len(text) > MAX_TWEET_LENGTH:
+                available = MAX_TWEET_LENGTH - len(header) - len(hashtags) - 4  # 4 = 2x\n + space + buffer
+                tweet_parts[0] = tweet_parts[0][:available].rsplit(' ', 1)[0] + "…"
+                text = f"{header}\n\n{tweet_parts[0]} {hashtags}"
             final_tweets.append(text)
         else:
             # Zincir (Thread)
-            # 1. Tweet: Başlık + İlk Parça + Hashtagler
-            first_tweet = f"{header_emoji} Tarihte Bugün ({day}.{month}.{year_str})\n\n{tweet_parts[0]} #tarih #tarihteneoldu (1/{len(tweet_parts)})"
-            final_tweets.append(first_tweet)
+            chain_suffix = f"(1/{len(tweet_parts)})"
+            first_text = f"{header}\n\n{tweet_parts[0]} {hashtags} {chain_suffix}"
+            # İlk tweet karakter limiti kontrolü
+            if len(first_text) > MAX_TWEET_LENGTH:
+                available = MAX_TWEET_LENGTH - len(header) - len(hashtags) - len(chain_suffix) - 5
+                tweet_parts[0] = tweet_parts[0][:available].rsplit(' ', 1)[0] + "…"
+                first_text = f"{header}\n\n{tweet_parts[0]} {hashtags} {chain_suffix}"
+            final_tweets.append(first_text)
             
             # 2...N. Tweetler
             for i, part in enumerate(tweet_parts[1:], 2):
-                tweet_text = f"{part} ({i}/{len(tweet_parts)})"
+                chain_suffix = f"({i}/{len(tweet_parts)})"
+                tweet_text = f"{part} {chain_suffix}"
+                # Devam tweetleri karakter limiti kontrolü
+                if len(tweet_text) > MAX_TWEET_LENGTH:
+                    available = MAX_TWEET_LENGTH - len(chain_suffix) - 2
+                    part = part[:available].rsplit(' ', 1)[0] + "…"
+                    tweet_text = f"{part} {chain_suffix}"
                 final_tweets.append(tweet_text)
                 
         # Görsel Kontrolü (Wikipedia)
@@ -454,7 +479,6 @@ def check_mentions_and_reply(client, api_v1):
      pass
 
 def download_image(url):
-    import time
     
     headers = {
         'User-Agent': 'TarihBot/3.0 (+https://github.com/kagandms/tarihte-bugun-botu)'
