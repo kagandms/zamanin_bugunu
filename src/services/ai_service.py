@@ -4,6 +4,7 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.utils.text_utils import smart_split_text, clean_twitter_text
 from typing import Tuple, List, Optional
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 class AIService:
     def __init__(self):
@@ -16,6 +17,7 @@ class AIService:
             "X-Title": settings.APP_NAME
         }
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def rewrite_event(self, original_text: str, year: Optional[str] = None) -> Tuple[List[str], List[str], Optional[str]]:
         """
         Rewrites the event text using DeepSeek to be viral and suitable for Twitter.
@@ -27,7 +29,7 @@ class AIService:
             "Sen profesyonel bir tarihçi ve sosyal medya uzmanısın. Görevin: "
             "Verilen tarihi olayı Twitter için VİRAL, İLGİ ÇEKİCİ ve DOĞRU bir flood (zincir) haline getirmektir."
             "\n\nKURALLAR:"
-            "\n- Her tweet < 200 karakter olmalı."
+            "\n- Her tweet < 220 karakter olmalı (güvenlik payı ile)."
             "\n- Türkçe dil bilgisi kusursuz olmalı."
             "\n- Asla halüsinasyon görme (uydurma bilgi yok)."
             "\n\nFORMAT:"
@@ -50,16 +52,27 @@ class AIService:
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                result = response.json()
                 
+                if response.status_code != 200:
+                    logger.error(f"AI API Error {response.status_code}: {response.text}")
+                    response.raise_for_status()
+                    
+                result = response.json()
                 content = result['choices'][0]['message']['content'].strip()
                 return self._parse_ai_response(content, original_text)
 
             except Exception as e:
-                logger.error(f"AI Service Error: {e}")
-                # Fallback
-                return smart_split_text(original_text, settings.MAX_TWEET_LENGTH - 50), [], None
+                logger.error(f"AI Service Exception: {e}")
+                raise # Re-raise for tenacity to catch
+
+    async def rewrite_event_safe(self, original_text: str, year: Optional[str] = None):
+        """Wrapper ensuring fallback if retries fail."""
+        try:
+            return await self.rewrite_event(original_text, year)
+        except Exception as e:
+            logger.critical(f"AI Service Failed after retries: {e}")
+            # Fallback: Split original text
+            return smart_split_text(original_text, settings.MAX_TWEET_LENGTH - 60), [], None
 
     def _parse_ai_response(self, content: str, original_text: str):
         """Parses the structured response from AI."""

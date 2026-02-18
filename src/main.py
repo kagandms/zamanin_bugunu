@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import random
 from datetime import datetime
 from src.core.config import settings
 from src.core.logger import logger
@@ -68,16 +69,17 @@ async def main():
 
         # 5. AI Rewrite
         logger.info("🤖 Requesting AI Rewrite...")
-        tweets, poll_options, image_prompt = await ai_service.rewrite_event(raw_text, year)
+        tweets, poll_options, image_prompt = await ai_service.rewrite_event_safe(raw_text, year)
         
         if not tweets:
-            logger.error("AI returned no tweets.")
+            logger.error("AI service returned empty tweets even after fallback.")
             return
 
         # 6. Image Handling
         media_id = None
-        # Priority: Wiki Image > AI Image
         image_url = None
+        
+        # A. Wiki Image (Best Quality)
         if selected_event.get("pages"):
              page = selected_event["pages"][0]
              if page.get("thumbnail"):
@@ -85,10 +87,19 @@ async def main():
              elif page.get("originalimage"):
                  image_url = page["originalimage"]["source"]
         
+        # B. AI Image Prompt (Creative)
         if not image_url and image_prompt:
              logger.info(f"Generating AI Image for: {image_prompt}")
              safe_prompt = image_prompt.replace(" ", "%20")
              image_url = f"https://pollinations.ai/p/{safe_prompt}?width=1024&height=1024&model=flux"
+
+        # C. Fallback: Generate Image from Event Text (Panic Mode)
+        if not image_url:
+            logger.warning("No image found! Generating fallback image from event text.")
+            # Use the first 100 chars of raw text as prompt
+            fallback_prompt = raw_text[:100].replace(" ", "%20")
+            # Using 'flux' model for better text adherence
+            image_url = f"https://pollinations.ai/p/historical%20painting%20of%20{fallback_prompt}?width=1024&height=1024&model=flux&seed={random.randint(0, 9999)}"
 
         if image_url:
             logger.info(f"Downloading image: {image_url}")
@@ -96,6 +107,16 @@ async def main():
             if filename:
                 media_id = await twitter_service.upload_media(filename)
                 image_service.cleanup(filename)
+                
+        # 6.5 Safety Check for Truncation
+        # Ensure no headers/hashtags push it over limit
+        clean_tweets = []
+        for i, t in enumerate(tweets):
+             # Just strict cutoff if somehow still too long
+             if len(t) > 280:
+                 t = t[:277] + "..."
+             clean_tweets.append(t)
+        tweets = clean_tweets
 
         # 7. Post to Twitter
         logger.info("Posting to Twitter...")
