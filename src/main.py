@@ -72,7 +72,8 @@ async def main():
 
         # 5. AI Rewrite
         logger.info("🤖 Requesting AI Rewrite...")
-        date_str = f"{today.day}.{today.month}.{today.year}"
+        # Fix: Show the historical year in the header instead of the current running year
+        date_str = f"{today.day}.{today.month}.{year}" if year else f"{today.day}.{today.month}"
         tweets, poll_options, image_prompt = await ai_service.rewrite_event_safe(raw_text, date_str, year)
         
         if not tweets:
