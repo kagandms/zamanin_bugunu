@@ -95,17 +95,19 @@ class AIService:
             return await self.rewrite_event(original_text, formatted_date, year)
         except Exception as e:
             logger.critical(f"AI Service Failed after retries: {e}")
-            # Fallback: Split original text BUT WITH THE HEADER
+            # Fallback: Split original text BUT WITH THE HEADER and HASHTAGS
             header = f"🕊️ Tarihte Bugün ({formatted_date})\n\n"
-            # Calculate remaining space: 220 - len(header)
-            available_len = settings.MAX_TWEET_LENGTH - len(header) - 20
+            footer = "\n\n#tarihteBugün #tarih"
+            
+            # Calculate remaining space
+            available_len = settings.MAX_TWEET_LENGTH - len(header) - len(footer) - 5
             
             # Smart split the content
             parts = smart_split_text(original_text, available_len)
             
-            # Prepend header to first part
+            # Prepend header and append footer to the first part
             if parts:
-                parts[0] = header + parts[0]
+                parts[0] = header + parts[0] + footer
                 
             return parts, [], None
 
