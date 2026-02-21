@@ -47,17 +47,20 @@ async def main():
         # Let's improve this: Pick a random candidate, check DB, if exists pick another.
         
         selected_event = None
+        local_used_texts = []
         for _ in range(10): # Try 10 times to find a unique event
-             candidate = content_service.select_best_event(events, []) # No local filtering here yet
+             candidate = content_service.select_best_event(events, local_used_texts)
              if not candidate:
                  break
              
-             exists = await repo.exists(candidate.get('text'))
+             event_text = candidate.get('text')
+             exists = await repo.exists(event_text)
              if not exists:
                  selected_event = candidate
                  break
              else:
-                 logger.info(f"Skipping duplicate: {candidate.get('text')[:30]}...")
+                 logger.info(f"Skipping duplicate: {event_text[:30]}...")
+                 local_used_texts.append(event_text)
         
         if not selected_event:
             logger.warning("Could not find a unique event after retries.")

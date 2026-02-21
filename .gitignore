@@ -92,6 +92,5 @@ venv.bak/
 
 # Project Specific
 logs/
-bot_data.db
 verify_db.py
 

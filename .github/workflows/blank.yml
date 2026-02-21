@@ -38,7 +38,7 @@ jobs:
         run: |
           git config --global user.name 'TarihBot Otomasyon'
           git config --global user.email 'bot@noreply.github.com'
-          git add bot_data.db || true
+          git add -f bot_data.db || true
           git commit -m "chore: update bot state (database)" || true
           git push
 
