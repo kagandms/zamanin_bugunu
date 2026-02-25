@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: SecretStr
-    # Primary Model: Gemini 2.0 Flash Lite (Free & Fast)
-    AI_MODEL: str = "google/gemini-2.0-flash-lite-preview-02-05:free"
+    # Primary Model: Nous Hermes 3 405B (Uncensored & Powerful)
+    AI_MODEL: str = "nousresearch/hermes-3-llama-3.1-405b:free"
     # Backup Model: Llama 3.3 70B (Free)
     BACKUP_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
     
