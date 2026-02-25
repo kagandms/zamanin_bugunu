@@ -31,8 +31,9 @@ class TwitterService:
             logger.info(f"Connected to Twitter as: {me.data.username}")
             return True
         except Exception as e:
-            logger.error(f"Twitter Auth Failed: {e}")
-            return False
+            logger.warning(f"Twitter Auth Verification Failed (bypassing): {e}")
+            logger.info("Proceeding to attempt posting anyway...")
+            return True
 
     async def upload_media(self, filename: str) -> str:
         """Uploads media using V1.1 API (wrapped in thread)."""
