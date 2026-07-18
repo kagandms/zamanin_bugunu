@@ -37,7 +37,7 @@ async def main():
         repo = HistoryRepository(session)
         
         # 3. Daily Post Limit Check
-        MAX_DAILY_POSTS = 3
+        MAX_DAILY_POSTS = 4
         todays_posts = await repo.get_todays_posts()
         todays_count = len(todays_posts)
         
