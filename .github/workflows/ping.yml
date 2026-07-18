@@ -1,7 +1,0 @@
-name: Wake Up Actions
-on: [push]
-jobs:
-  ping:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo 'Actions are awake!'
