@@ -2,10 +2,9 @@ name: Zamanın Bugünü Botu (Schedule)
 
 on:
   schedule:
-    # Günde 4 kez çalışır: UTC 06:00, 10:00, 14:00, 18:00 (TR saatiyle 09:00, 13:00, 17:00, 21:00)
-    - cron: '0 6,10,14,18 * * *'
+    # Günde 4 kez çalışır: UTC 06:07, 10:07, 14:07, 18:07 (TR saatiyle 09:07, 13:07, 17:07, 21:07)
+    - cron: '7 6,10,14,18 * * *'
   workflow_dispatch:
-  push:
 
 jobs:
   run-bot:
