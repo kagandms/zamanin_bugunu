@@ -34,6 +34,7 @@ class AIService:
             "Sen profesyonel bir tarihçi ve sosyal medya uzmanısın. Görevin: "
             "Verilen tarihi olayı Threads ve Telegram kanalları için VİRAL, İLGİ ÇEKİCİ ve DOĞRU bir içerik haline getirmektir."
             "\n\nKURALLAR:"
+            "\n- Metnin GORSEL_PROMPT haricindeki tamamı KESİNLİKLE Türkçe (Turkish) olmalıdır. Diğer dilleri (İngilizce, Rusça vb.) kesinlikle kullanma."
             "\n- Toplam metin 800 karakteri ASLA geçmemelidir (Telegram limitleri için)."
             "\n- Threads limitleri için 400 karakteri geçmeyen anlamlı bloklar oluştur (--- işareti ile ayır)."
             "\n- İlk paragrafta vurucu bir giriş yap ve emojiler kullan."
