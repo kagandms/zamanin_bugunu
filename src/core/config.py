@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: SecretStr
     # Primary Model: Auto-routed to best available free model
-    AI_MODEL: str = "openrouter/free"
+    AI_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
     # Backup Model: Auto-routed to best available free model
-    BACKUP_MODEL: str = "openrouter/free"
+    BACKUP_MODEL: str = "google/gemini-2.0-pro-exp-02-05:free"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

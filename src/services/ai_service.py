@@ -57,7 +57,9 @@ class AIService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Olay: {original_text}{year_context}\nRevize et."}
             ],
-            "stream": False
+            "stream": False,
+            "temperature": 0.3,
+            "max_tokens": 1000
         }
 
         async with httpx.AsyncClient(timeout=45.0) as client:
