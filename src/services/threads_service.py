@@ -13,7 +13,7 @@ class ThreadsService:
     async def verify_credentials(self) -> bool:
         """Verifies Threads API Credentials."""
         url = f"{self.api_url}/me?access_token={self.access_token}"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 response = await client.get(url)
                 if response.status_code == 200:
@@ -107,7 +107,7 @@ class ThreadsService:
 
     async def _make_request(self, url: str, payload: dict) -> Optional[str]:
         for attempt in range(1, settings.MAX_RETRIES + 1):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 try:
                     response = await client.post(url, data=payload)
                     if response.status_code == 200:

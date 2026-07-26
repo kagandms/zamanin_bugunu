@@ -13,7 +13,7 @@ class TelegramService:
     async def verify_credentials(self) -> bool:
         """Verifies Telegram Bot Token by calling getMe."""
         url = f"{self.api_url}/getMe"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 response = await client.get(url)
                 if response.status_code == 200:
@@ -55,7 +55,7 @@ class TelegramService:
             "text": text
         }
         for attempt in range(1, settings.MAX_RETRIES + 1):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 try:
                     response = await client.post(url, json=payload)
                     if response.status_code == 200:
@@ -76,7 +76,7 @@ class TelegramService:
         }
         
         for attempt in range(1, settings.MAX_RETRIES + 1):
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 try:
                     with open(image_path, "rb") as photo:
                         files = {"photo": photo}

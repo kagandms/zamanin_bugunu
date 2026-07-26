@@ -109,7 +109,7 @@ async def main():
         import urllib.parse
         if not image_url and image_prompt:
              logger.info(f"Generating AI Image for: {image_prompt}")
-             safe_prompt = urllib.parse.quote(image_prompt[:800])
+             safe_prompt = urllib.parse.quote(image_prompt[:800]) + ".jpg"
              image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&nologo=true"
 
         # C. Fallback: Generate Image from Event Text (Panic Mode)
@@ -118,7 +118,7 @@ async def main():
             # Use the first 100 chars of raw text as prompt, clean it
             import re
             fallback_prompt = re.sub(r'[^a-zA-Z0-9\s]', '', raw_text[:100])
-            safe_fallback = urllib.parse.quote(f"historical painting of {fallback_prompt}")
+            safe_fallback = urllib.parse.quote(f"historical painting of {fallback_prompt}") + ".jpg"
             image_url = f"https://image.pollinations.ai/prompt/{safe_fallback}?width=1024&height=1024&model=flux&seed={random.randint(0, 9999)}&nologo=true"
 
         filename = None
@@ -160,6 +160,7 @@ async def main():
             logger.info("✅ Cycle completed successfully.")
         else:
             logger.error("❌ Failed to post to any platform.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     try:
