@@ -20,10 +20,12 @@ class Settings(BaseSettings):
     
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: SecretStr
-    # Primary Model: Auto-routed to best available free model
-    AI_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
-    # Backup Model: Auto-routed to best available free model
-    BACKUP_MODEL: str = "google/gemini-2.0-pro-exp-02-05:free"
+    # Primary Model: Gemini 2.5 Flash (free, fast, reliable)
+    AI_MODEL: str = "google/gemini-2.5-flash-preview:free"
+    # Backup Model: Meta Llama 4 Maverick (free)
+    BACKUP_MODEL: str = "meta-llama/llama-4-maverick:free"
+    # Last Resort: OpenRouter auto-routes to any available free model
+    LAST_RESORT_MODEL: str = "openrouter/free"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

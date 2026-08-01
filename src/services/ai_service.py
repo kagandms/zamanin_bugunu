@@ -84,7 +84,10 @@ class AIService:
                 try:
                     payload["model"] = settings.BACKUP_MODEL
                     response = await client.post(self.url, headers=self.headers, json=payload)
-                    response.raise_for_status()
+                    
+                    if response.status_code != 200:
+                        logger.warning(f"Backup Model ({settings.BACKUP_MODEL}) failed: {response.status_code} - BODY: {response.text}")
+                        raise Exception(f"Backup model failure: {response.text}")
                     
                     result = response.json()
                     content = result['choices'][0]['message']['content'].strip()
@@ -92,8 +95,25 @@ class AIService:
                     return self._parse_ai_response(content, original_text)
                     
                 except Exception as backup_e:
-                    logger.error(f"❌ Backup Model also failed: {backup_e}")
-                    raise # Retries from tenacity will catch this
+                    logger.warning(f"⚠️ Backup Model also failed: {backup_e}. Trying Last Resort...")
+                    
+                    # 3. Try Last Resort Model (openrouter/free auto-router)
+                    try:
+                        payload["model"] = settings.LAST_RESORT_MODEL
+                        response = await client.post(self.url, headers=self.headers, json=payload)
+                        
+                        if response.status_code != 200:
+                            logger.error(f"Last Resort Model ({settings.LAST_RESORT_MODEL}) failed: {response.status_code} - BODY: {response.text}")
+                            raise Exception(f"Last resort failure: {response.text}")
+                        
+                        result = response.json()
+                        content = result['choices'][0]['message']['content'].strip()
+                        logger.info(f"✅ Success with Last Resort Model: {settings.LAST_RESORT_MODEL}")
+                        return self._parse_ai_response(content, original_text)
+                        
+                    except Exception as last_e:
+                        logger.error(f"❌ All 3 models failed. Last error: {last_e}")
+                        raise  # Retries from tenacity will catch this
 
     async def rewrite_event_safe(self, original_text: str, formatted_date: str, year: Optional[str] = None):
         """Wrapper ensuring fallback if retries fail."""

@@ -90,8 +90,8 @@ async def main():
         tweets, poll_options, image_prompt = await ai_service.rewrite_event_safe(raw_text, date_str, year)
         
         if not tweets:
-            logger.warning("⏭️ AI could not produce quality content. Skipping this cycle — no post will be made.")
-            return
+            logger.critical("❌ AI SERVICE FAILURE — No content generated. Failing workflow.")
+            sys.exit(1)
 
         # 6. Image Handling
         media_id = None
