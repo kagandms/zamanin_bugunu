@@ -138,12 +138,20 @@ async def main():
         footer = "Gönderiyi beğenmeyi, paylaşmayı ve takip etmeyi unutmayın\n\nTelegram: https://t.me/zamaninbugunu\nThreads: https://www.threads.com/@zamaninbugunu"
         threads.append(footer)
 
-        # 7. Post to Telegram
+        # 7. Reserve this event in DB BEFORE posting (prevents duplicate selection)
+        await repo.add_entry(
+            text=raw_text,
+            category=selected_event.get('_category'),
+            tweet_id="RESERVED"
+        )
+        logger.info("📝 Event reserved in history DB to prevent duplicates.")
+
+        # 8. Post to Telegram
         logger.info("Posting to Telegram...")
         telegram_text = "\n\n".join(threads)
         tg_success = await telegram_service.send_post(telegram_text, filename)
         
-        # 8. Post to Threads
+        # 9. Post to Threads
         logger.info("Posting to Threads...")
         th_success = await threads_service.post_thread(threads, image_url)
         
@@ -151,12 +159,6 @@ async def main():
             image_service.cleanup(filename)
         
         if tg_success or th_success:
-            # 9. Save to History
-            await repo.add_entry(
-                text=raw_text,
-                category=selected_event.get('_category'),
-                tweet_id="TG_TH_POSTED"
-            )
             logger.info("✅ Cycle completed successfully.")
         else:
             logger.error("❌ Failed to post to any platform.")

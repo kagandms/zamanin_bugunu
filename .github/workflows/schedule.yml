@@ -6,6 +6,11 @@ on:
     - cron: '7 6,10,14,18 * * *'
   workflow_dispatch:
 
+# Aynı anda sadece bir workflow çalışabilir — duplicate post'u önler
+concurrency:
+  group: zamanin-bugunu-bot
+  cancel-in-progress: false
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -16,6 +21,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
+      - name: Pull latest changes (DB sync)
+        run: |
+          git pull --rebase origin main || git pull --rebase origin master || true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

@@ -204,10 +204,20 @@ class ContentService:
                 f"{item.get('text', '')[:70]}"
             )
         
-        # Pick the winner
-        winner = final_scored[0]
+        # Weighted random selection from top 3 to avoid deterministic repeats
+        # Weights are proportional to scores so higher-scored events are still preferred
+        top_n = final_scored[:3]
+        if len(top_n) == 1:
+            winner = top_n[0]
+        else:
+            scores = [max(entry[0], 1) for entry in top_n]  # Ensure non-zero weights
+            total = sum(scores)
+            weights = [s / total for s in scores]
+            winner = random.choices(top_n, weights=weights, k=1)[0]
+
         logger.info(
-            f"🏆 Selected most famous event (score={winner[0]}, pageviews={winner[1]:,})"
+            f"🏆 Selected event (score={winner[0]}, pageviews={winner[1]:,}) "
+            f"from top {len(top_n)} candidates"
         )
         
         return winner[2]
