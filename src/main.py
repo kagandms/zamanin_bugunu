@@ -29,9 +29,14 @@ async def main():
     tg_ok = await telegram_service.verify_credentials()
     th_ok = await threads_service.verify_credentials()
     
-    if not tg_ok or not th_ok:
-        logger.critical("API Authentication Failed. Exiting.")
+    if not tg_ok and not th_ok:
+        logger.critical("All API Authentications Failed (both Telegram and Threads). Exiting.")
         sys.exit(1)
+    
+    if not th_ok:
+        logger.warning("⚠️ Threads authentication failed (token expired/invalid). Will continue with Telegram only.")
+    if not tg_ok:
+        logger.warning("⚠️ Telegram authentication failed. Will continue with Threads only.")
 
     async with AsyncSessionLocal() as session:
         repo = HistoryRepository(session)
@@ -147,13 +152,21 @@ async def main():
         logger.info("📝 Event reserved in history DB to prevent duplicates.")
 
         # 8. Post to Telegram
-        logger.info("Posting to Telegram...")
-        telegram_text = "\n\n".join(threads)
-        tg_success = await telegram_service.send_post(telegram_text, filename)
+        tg_success = False
+        if tg_ok:
+            logger.info("Posting to Telegram...")
+            telegram_text = "\n\n".join(threads)
+            tg_success = await telegram_service.send_post(telegram_text, filename)
+        else:
+            logger.warning("Skipping Telegram posting due to credential verification failure.")
         
         # 9. Post to Threads
-        logger.info("Posting to Threads...")
-        th_success = await threads_service.post_thread(threads, image_url)
+        th_success = False
+        if th_ok:
+            logger.info("Posting to Threads...")
+            th_success = await threads_service.post_thread(threads, image_url)
+        else:
+            logger.warning("Skipping Threads posting due to credential verification failure.")
         
         if filename:
             image_service.cleanup(filename)
