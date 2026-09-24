@@ -2,10 +2,37 @@ import httpx
 import random
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.core.logger import logger
 from src.core.config import settings
-from typing import Optional, List
+from typing import Optional, List, Tuple
+
+TOPIC_KEYWORDS = {
+    "SIYASET": [
+        "darbe", "seçim", "hükümet", "başbakan", "cumhurbaşkanı", "meclis", "parti", "chp", "akp",
+        "antlaşma", "anlaşma", "protokol", "istifa", "sadrazam", "padişah", "parlamento", "anayasa",
+        "kanun", "milletvekili", "bakan", "siyasi", "kongre", "cumhuriyet"
+    ],
+    "AFET_DEPREM": [
+        "deprem", "zelzele", "sel", "tsunami", "yangın", "fırtına", "kasırga", "heyelan",
+        "salgın", "veba", "kolera", "taşkın", "afet", "facia", "enkaz"
+    ],
+    "BILIM_TEKNOLOJI": [
+        "icat", "keşif", "roket", "uzay", "luna", "nasa", "fizik", "kimya", "matematik",
+        "tıp", "aşı", "bilim", "deney", "astronomi", "bilgisayar", "internet", "barometre",
+        "teleskop", "nobel", "laboratuvar"
+    ],
+    "SAVAS_ASKERI": [
+        "savaş", "muharebe", "taarruz", "cephe", "kuşatma", "ordu", "donanma", "asker",
+        "işgal", "katliam", "gerilla", "bombardıman", "komutan", "askeri", "harekat", "zafer",
+        "yenilgi", "tabur", "tümen", "hava kuvvetleri"
+    ],
+    "KULTUR_SANAT": [
+        "roman", "şair", "yazar", "tiyatro", "sinema", "film", "sanat", "ressam", "müzik",
+        "konser", "albüm", "beste", "opera", "kitap", "edebiyat", "şiir", "oyuncu"
+    ]
+}
+
 
 class ContentService:
     def __init__(self):
@@ -25,6 +52,30 @@ class ContentService:
         s = s.replace('İ', 'i').replace('I', 'ı').lower()
         return bool(self.pattern.search(s))
 
+    @staticmethod
+    def classify_topic(text: str) -> str:
+        """
+        Classifies an event text into one of the main thematic topics:
+        SIYASET, AFET_DEPREM, BILIM_TEKNOLOJI, SAVAS_ASKERI, KULTUR_SANAT, or GENEL.
+        """
+        if not text:
+            return "GENEL"
+
+        s = unicodedata.normalize('NFKC', text)
+        s = s.replace('İ', 'i').replace('I', 'ı').lower()
+
+        scores = {}
+        for category, keywords in TOPIC_KEYWORDS.items():
+            count = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw), s))
+            if count > 0:
+                scores[category] = count
+
+        if scores:
+            # Pick category with the highest hit count
+            return max(scores.items(), key=lambda x: x[1])[0]
+
+        return "GENEL"
+
     def _calculate_fame_score(self, item: dict) -> int:
         """
         Calculates a 'fame score' for an event based on Wikipedia signals.
@@ -42,8 +93,37 @@ class ContentService:
         elif item.get('_category') == 'deaths':
             score += 5
 
-        # 1.5 Turkish content bonus — slight edge for local relevance
-        if self._is_turkish(item.get('text', '')):
+        # 1.5 Turkish content bonus & foreign penalty
+        text = item.get('text', '')
+        is_tr = self._is_turkish(text)
+        if is_tr:
+            score += 30
+        else:
+            # Foreign event penalty unless global superpower milestone
+            score -= 15
+
+        # 1.6 Proven High-Engagement Historical Eras (35+ Age Demographics):
+        # 1919-1999 Turkish Era (Atatürk, Darbeler, Gürsel, Menderes, ASALA, Kıbrıs, vb.)
+        year = item.get('year')
+        if year:
+            try:
+                i_year = int(year)
+                if is_tr and 1919 <= i_year <= 1999:
+                    score += 40  # Proven #1 engagement category
+                elif is_tr and i_year < 1919:
+                    score += 25  # Ottoman / Seljuk history
+                elif not is_tr and i_year >= 1945 and any(w in text.lower() for w in ['sovyet', 'uzay', 'luna', 'savaş', 'nükleer', 'helsinki']):
+                    score += 25  # Space / Cold War diplomacy milestones
+            except (ValueError, TypeError):
+                pass
+
+        # 1.7 Topic Category Bonus (Based on Proven Views & Replies):
+        topic = self.classify_topic(text)
+        if topic in ('SIYASET', 'AFET_DEPREM'):
+            score += 30
+        elif topic == 'SAVAS_ASKERI':
+            score += 25
+        elif topic in ('KULTUR_SANAT', 'BILIM_TEKNOLOJI'):
             score += 15
 
         # 2. Linked pages count — more linked articles = more notable
@@ -103,14 +183,34 @@ class ContentService:
 
         return score
 
+    def _get_dynamic_date_range(self) -> Tuple[str, str]:
+        """
+        Calculates the last 3 completed calendar months for the Wikimedia pageviews API.
+        Format: YYYYMM01 to YYYYMMDD
+        """
+        now = datetime.now()
+        first_of_current = datetime(now.year, now.month, 1)
+        last_month_end = first_of_current - timedelta(days=1)
+
+        start_year = last_month_end.year
+        start_month = last_month_end.month - 2
+        if start_month <= 0:
+            start_month += 12
+            start_year -= 1
+
+        start_str = f"{start_year}{start_month:02d}01"
+        end_str = f"{last_month_end.year}{last_month_end.month:02d}{last_month_end.day:02d}"
+        return start_str, end_str
+
     async def _get_pageviews(self, page_title: str, client: httpx.AsyncClient) -> int:
         """Fetches monthly page view count from Wikipedia as a fame proxy."""
         try:
             import urllib.parse
             encoded_title = urllib.parse.quote(page_title, safe='')
+            start_date, end_date = self._get_dynamic_date_range()
             url = (
                 f"{self.pageviews_url}/tr.wikipedia/all-access/all-agents/"
-                f"{encoded_title}/monthly/20250101/20250630"
+                f"{encoded_title}/monthly/{start_date}/{end_date}"
             )
             resp = await client.get(url, timeout=5.0)
             if resp.status_code == 200:
@@ -148,10 +248,11 @@ class ContentService:
     async def select_best_event(self, items: list, used_texts: list) -> Optional[dict]:
         """
         Selects the MOST FAMOUS event using a multi-signal scoring algorithm:
-        1. Filters to Turkish content only
+        1. Filters duplicates
         2. Scores each event by fame signals (category, images, descriptions)
         3. For top candidates, fetches Wikipedia page views as the ultimate fame indicator
-        4. Returns the highest-scoring unused event
+        4. Injects detected topic category into candidate dict
+        5. Returns the highest-scoring unused event
         """
         # Filter duplicates
         candidates = [i for i in items if i.get('text') not in used_texts]
@@ -159,10 +260,7 @@ class ContentService:
         if not candidates:
             return None
 
-        # Use ALL events as the pool (mixed Turkish + Global)
-        # Turkish events get a bonus in _calculate_fame_score, but don't exclude global ones
         pool = candidates
-        
         turkish_count = sum(1 for i in pool if self._is_turkish(i.get('text', '')))
         logger.info(f"Event pool: {len(pool)} total ({turkish_count} Turkish, {len(pool) - turkish_count} Global)")
 
@@ -205,19 +303,23 @@ class ContentService:
             )
         
         # Weighted random selection from top 3 to avoid deterministic repeats
-        # Weights are proportional to scores so higher-scored events are still preferred
         top_n = final_scored[:3]
         if len(top_n) == 1:
             winner = top_n[0]
         else:
-            scores = [max(entry[0], 1) for entry in top_n]  # Ensure non-zero weights
+            scores = [max(entry[0], 1) for entry in top_n]
             total = sum(scores)
             weights = [s / total for s in scores]
             winner = random.choices(top_n, weights=weights, k=1)[0]
 
+        selected = winner[2]
+        # Auto-classify topic
+        topic = self.classify_topic(selected.get('text', ''))
+        selected['_topic_category'] = topic
+
         logger.info(
-            f"🏆 Selected event (score={winner[0]}, pageviews={winner[1]:,}) "
+            f"🏆 Selected event (score={winner[0]}, pageviews={winner[1]:,}, topic={topic}) "
             f"from top {len(top_n)} candidates"
         )
         
-        return winner[2]
+        return selected

@@ -2,7 +2,7 @@ import httpx
 from src.core.config import settings
 from src.core.logger import logger
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict, Any
 
 class ThreadsService:
     def __init__(self):
@@ -25,18 +25,77 @@ class ThreadsService:
                 logger.error(f"Threads Auth Verification Failed: {e}")
         return False
 
-    async def post_thread(self, threads: List[str], image_url: Optional[str] = None) -> bool:
+    async def refresh_access_token(self) -> Optional[str]:
+        """
+        Refreshes a long-lived Threads access token, extending its validity by another 60 days.
+        Meta Endpoint: GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token={token}
+        """
+        url = f"https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token={self.access_token}"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    new_token = data.get("access_token")
+                    expires_in = data.get("expires_in", 0)
+                    days = expires_in // 86400
+                    logger.info(f"✅ Threads access token successfully refreshed! Valid for ~{days} days.")
+                    return new_token
+                else:
+                    logger.warning(f"Threads token refresh returned HTTP {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"Failed to refresh Threads access token: {e}")
+        return None
+
+    async def _wait_for_container_status(self, container_id: str, max_timeout: int = 45, poll_interval: int = 3) -> bool:
+        """
+        Polls Meta Graph API for container processing status.
+        Replaces hardcoded sleep with dynamic readiness check.
+        Returns True if FINISHED, False if ERROR or timeout.
+        """
+        url = f"{self.api_url}/{container_id}?fields=status,error_message&access_token={self.access_token}"
+        elapsed = 0
+        while elapsed < max_timeout:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        status = data.get("status")
+                        if status == "FINISHED":
+                            logger.info(f"✅ Meta container {container_id} is ready in ~{elapsed}s.")
+                            return True
+                        elif status == "ERROR":
+                            logger.error(f"❌ Meta container processing failed: {data.get('error_message')}")
+                            return False
+                        else:
+                            logger.debug(f"Container {container_id} status: {status} ({elapsed}s elapsed)...")
+                    else:
+                        logger.warning(f"Container status check HTTP {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.warning(f"Error checking container status: {e}")
+
+        logger.warning(f"Container {container_id} wait timed out after {max_timeout}s.")
+        return False
+
+    async def post_thread(self, threads: List[str], image_url: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Posts a chain of threads to Meta's Threads API.
         Meta API requires:
         1. Create Media Container (POST /{user_id}/threads)
         2. Publish Media Container (POST /{user_id}/threads_publish)
+        
+        Returns:
+            Tuple[bool, Optional[str]]: (Success boolean, First post published ID)
         """
         if settings.DRY_RUN:
             logger.info(f"[DRY RUN] Would post {len(threads)} threads to Threads API.")
-            return True
+            return True, "DRY_RUN_ID"
 
         last_id = None
+        first_post_id = None
         
         for i, text in enumerate(threads):
             media_type = "IMAGE" if (i == 0 and image_url) else "TEXT"
@@ -63,11 +122,19 @@ class ThreadsService:
                     payload["media_type"] = "TEXT"
                     container_id = await self._make_request(create_url, payload)
                 if not container_id:
-                    return False
+                    return False, None
 
+            # Dynamic polling instead of hardcoded sleep
             if media_type == "IMAGE" and "image_url" in payload:
-                logger.info("Waiting 30 seconds for Meta to process the image URL...")
-                await asyncio.sleep(30)
+                logger.info("Polling Meta container status until image is processed...")
+                container_ready = await self._wait_for_container_status(container_id)
+                if not container_ready:
+                    logger.warning("Container processing failed/timed out. Falling back to TEXT...")
+                    payload.pop("image_url", None)
+                    payload["media_type"] = "TEXT"
+                    container_id = await self._make_request(create_url, payload)
+                    if not container_id:
+                        return False, None
 
             # Step 2: Publish Media Container
             publish_url = f"{self.api_url}/{self.user_id}/threads_publish"
@@ -78,7 +145,7 @@ class ThreadsService:
             
             published_id = await self._make_request(publish_url, publish_payload)
 
-            # Fallback: if IMAGE publish failed, retry entire flow as TEXT
+            # Fallback: if IMAGE publish failed, retry entire post as TEXT
             if not published_id and media_type == "IMAGE":
                 logger.warning("IMAGE publish failed! Retrying entire post as TEXT only...")
                 text_payload = {
@@ -90,7 +157,7 @@ class ThreadsService:
                     text_payload["reply_to_id"] = last_id
                 text_container_id = await self._make_request(create_url, text_payload)
                 if text_container_id:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(2)
                     text_publish_payload = {
                         "creation_id": text_container_id,
                         "access_token": self.access_token
@@ -98,12 +165,39 @@ class ThreadsService:
                     published_id = await self._make_request(publish_url, text_publish_payload)
 
             if not published_id:
-                return False
+                return False, None
+
+            if first_post_id is None:
+                first_post_id = published_id
 
             last_id = published_id
             await asyncio.sleep(2)
 
-        return True
+        return True, first_post_id
+
+    async def get_post_insights(self, post_id: str) -> Optional[Dict[str, int]]:
+        """
+        Fetches metrics (views, likes, replies, reposts, quotes) for a given Threads post.
+        """
+        metrics = "views,likes,replies,reposts,quotes"
+        url = f"{self.api_url}/{post_id}/insights?metric={metrics}&access_token={self.access_token}"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    result = {}
+                    for item in data:
+                        metric_name = item.get("name")
+                        values = item.get("values", [])
+                        if values:
+                            result[metric_name] = values[0].get("value", 0)
+                    return result
+                else:
+                    logger.warning(f"Insights API HTTP {resp.status_code} for {post_id}: {resp.text}")
+        except Exception as e:
+            logger.error(f"Failed to fetch insights for {post_id}: {e}")
+        return None
 
     async def _make_request(self, url: str, payload: dict) -> Optional[str]:
         for attempt in range(1, settings.MAX_RETRIES + 1):

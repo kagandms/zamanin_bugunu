@@ -2,8 +2,8 @@ name: Zamanın Bugünü Botu (Schedule)
 
 on:
   schedule:
-    # Günde 4 kez çalışır: UTC 06:07, 10:07, 14:07, 18:07 (TR saatiyle 09:07, 13:07, 17:07, 21:07)
-    - cron: '7 6,10,14,18 * * *'
+    # Günde 4 kez çalışır: UTC 06:07, 11:07, 17:07, 19:07 (TR saatiyle 09:07, 14:07, 20:07, 22:07 - Prime-Time Gece Zirvesi)
+    - cron: '7 6,11,17,19 * * *'
   workflow_dispatch:
 
 # Aynı anda sadece bir workflow çalışabilir — duplicate post'u önler

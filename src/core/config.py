@@ -6,7 +6,7 @@ from pydantic import Field, SecretStr
 class Settings(BaseSettings):
     # Application Info
     APP_NAME: str = "Tarihte Bugün Botu (Elite Edition)"
-    VERSION: str = "4.0.0"
+    VERSION: str = "4.1.0"
     DEBUG: bool = False
     DRY_RUN: bool = False  # If True, no tweets will be sent
     
@@ -20,11 +20,10 @@ class Settings(BaseSettings):
     
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: SecretStr
-    # Primary Model: Gemini 2.5 Flash (free, fast, reliable)
+    # Cascade of reliable free models
     AI_MODEL: str = "google/gemini-2.5-flash-preview:free"
-    # Backup Model: Meta Llama 4 Maverick (free)
-    BACKUP_MODEL: str = "meta-llama/llama-4-maverick:free"
-    # Last Resort: OpenRouter auto-routes to any available free model
+    BACKUP_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
+    TERTIARY_MODEL: str = "qwen/qwen-2.5-72b-instruct:free"
     LAST_RESORT_MODEL: str = "openrouter/free"
     
     # Database

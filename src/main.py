@@ -15,7 +15,7 @@ from src.services.threads_service import ThreadsService
 async def main():
     logger.info("🚀 Starting Zamanın Bugünü (Elite Edition)")
     
-    # 1. Initialize DB
+    # 1. Initialize DB and run safe schema migration
     await init_db()
     
     # 2. Setup Services
@@ -25,7 +25,7 @@ async def main():
     telegram_service = TelegramService()
     threads_service = ThreadsService()
     
-    # Verify Creds
+    # Verify Credentials
     tg_ok = await telegram_service.verify_credentials()
     th_ok = await threads_service.verify_credentials()
     
@@ -33,8 +33,20 @@ async def main():
         logger.critical("All API Authentications Failed (both Telegram and Threads). Exiting.")
         sys.exit(1)
     
+    # Early Warning System: If Threads token fails, alert via Telegram immediately
     if not th_ok:
-        logger.warning("⚠️ Threads authentication failed (token expired/invalid). Will continue with Telegram only.")
+        logger.warning("⚠️ Threads authentication failed (token expired/invalid). Alerting admin...")
+        if tg_ok:
+            alert_msg = (
+                "🚨 [Zamanın Bugünü Botu Uyarısı]\n\n"
+                "Threads API kimlik doğrulaması başarısız oldu! 60 günlük erişim token'ının süresi dolmuş olabilir.\n"
+                "Paylaşımların aksamaması için lütfen GitHub Secrets (THREADS_ACCESS_TOKEN) değerini yenileyin."
+            )
+            await telegram_service.send_post(alert_msg)
+    else:
+        # Attempt opportunistic token refresh to extend 60-day lifespan
+        await threads_service.refresh_access_token()
+
     if not tg_ok:
         logger.warning("⚠️ Telegram authentication failed. Will continue with Threads only.")
 
@@ -61,45 +73,58 @@ async def main():
             logger.error("No events found!")
             return
 
-        # 5. Select Event (Avoid ALL Duplicates: today's + all-time)
+        # 5. Candidate Failover Loop: Select event and rewrite with intelligent failover
         selected_event = None
-        # Start with today's already-posted texts to avoid same-day repeats
+        tweets = None
+        poll_options = []
+        image_prompt = None
+        raw_text = None
+        year = None
+        topic = None
+        
         local_used_texts = list(todays_posts)
         
-        for _ in range(10):  # Try 10 times to find a unique event
-             candidate = await content_service.select_best_event(events, local_used_texts)
-             if not candidate:
-                 break
-             
-             event_text = candidate.get('text')
-             exists = await repo.exists(event_text)
-             if not exists:
-                 selected_event = candidate
-                 break
-             else:
-                 logger.info(f"Skipping duplicate: {event_text[:30]}...")
-                 local_used_texts.append(event_text)
-        
-        if not selected_event:
-            logger.warning("Could not find a unique event after retries.")
-            return
+        for attempt in range(5):
+            candidate = await content_service.select_best_event(events, local_used_texts)
+            if not candidate:
+                break
+            
+            c_text = candidate.get('text')
+            exists = await repo.exists(c_text)
+            if exists:
+                logger.info(f"Skipping duplicate: {c_text[:30]}...")
+                local_used_texts.append(c_text)
+                continue
 
-        raw_text = selected_event.get('text')
-        year = selected_event.get('year')
-        logger.info(f"Selected Event: {raw_text} ({year})")
+            extract = None
+            if candidate.get("pages"):
+                extract = candidate["pages"][0].get("extract")
 
-        # 5. AI Rewrite
-        logger.info("🤖 Requesting AI Rewrite...")
-        # Fix: Show the historical year in the header instead of the current running year
-        date_str = f"{today.day}.{today.month}.{year}" if year else f"{today.day}.{today.month}"
-        tweets, poll_options, image_prompt = await ai_service.rewrite_event_safe(raw_text, date_str, year)
-        
-        if not tweets:
-            logger.critical("❌ AI SERVICE FAILURE — No content generated. Failing workflow.")
+            c_year = candidate.get('year')
+            date_str = f"{today.day}.{today.month}.{c_year}" if c_year else f"{today.day}.{today.month}"
+            
+            logger.info(f"Attempting rewrite for candidate #{attempt+1}: {c_text[:50]}... ({c_year})")
+            t, p, img_p = await ai_service.rewrite_event_safe(c_text, date_str, c_year, extract=extract)
+            
+            if t and len("".join(t)) >= 80:
+                selected_event = candidate
+                tweets = t
+                poll_options = p
+                image_prompt = img_p
+                raw_text = c_text
+                year = c_year
+                topic = candidate.get('_topic_category') or ContentService.classify_topic(c_text)
+                logger.info(f"✅ Successfully prepared event on attempt #{attempt+1} | Topic: {topic}")
+                break
+            else:
+                logger.warning(f"Candidate #{attempt+1} rewrite failed. Trying next candidate...")
+                local_used_texts.append(c_text)
+
+        if not selected_event or not tweets:
+            logger.critical("❌ All event candidates and fallback generators failed. Exiting.")
             sys.exit(1)
 
         # 6. Image Handling
-        media_id = None
         image_url = None
         
         # A. Wiki Image (Best Quality)
@@ -117,10 +142,9 @@ async def main():
              safe_prompt = urllib.parse.quote(image_prompt[:800]) + ".jpg"
              image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&nologo=true"
 
-        # C. Fallback: Generate Image from Event Text (Panic Mode)
+        # C. Fallback: Generate Image from Event Text
         if not image_url:
             logger.warning("No image found! Generating fallback image from event text.")
-            # Use the first 100 chars of raw text as prompt, clean it
             import re
             fallback_prompt = re.sub(r'[^a-zA-Z0-9\s]', '', raw_text[:100])
             safe_fallback = urllib.parse.quote(f"historical painting of {fallback_prompt}") + ".jpg"
@@ -139,32 +163,42 @@ async def main():
              clean_threads.append(t)
         threads = clean_threads
         
-        # 6.7 Append Social Media Footer
-        footer = "Gönderiyi beğenmeyi, paylaşmayı ve takip etmeyi unutmayın\n\nTelegram: https://t.me/zamaninbugunu\nThreads: https://www.threads.com/@zamaninbugunu"
-        threads.append(footer)
+        # 6.7 Platform-Specific Footers (Optimized for Conversion)
+        # Threads: native clickable handle mention without clunky URLs
+        threads_footer = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için takipte kalın 👉 @zamaninbugunu"
+        threads_payload = list(threads) + [threads_footer]
+
+        # Telegram: rich link format
+        telegram_footer = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
+        telegram_payload = list(threads) + [telegram_footer]
 
         # 7. Reserve this event in DB BEFORE posting (prevents duplicate selection)
-        await repo.add_entry(
+        entry_id = await repo.add_entry(
             text=raw_text,
             category=selected_event.get('_category'),
-            tweet_id="RESERVED"
+            tweet_id="RESERVED",
+            topic_category=topic
         )
-        logger.info("📝 Event reserved in history DB to prevent duplicates.")
+        logger.info(f"📝 Event reserved in history DB (ID: {entry_id}, Topic: {topic}) to prevent duplicates.")
 
         # 8. Post to Telegram
         tg_success = False
         if tg_ok:
             logger.info("Posting to Telegram...")
-            telegram_text = "\n\n".join(threads)
+            telegram_text = "\n\n".join(telegram_payload)
             tg_success = await telegram_service.send_post(telegram_text, filename)
         else:
             logger.warning("Skipping Telegram posting due to credential verification failure.")
         
         # 9. Post to Threads
         th_success = False
+        th_post_id = None
         if th_ok:
             logger.info("Posting to Threads...")
-            th_success = await threads_service.post_thread(threads, image_url)
+            th_success, th_post_id = await threads_service.post_thread(threads_payload, image_url)
+            if th_success and th_post_id:
+                await repo.update_threads_info(entry_id, th_post_id, topic)
+                logger.info(f"💾 Updated DB entry {entry_id} with published Threads post ID: {th_post_id}")
         else:
             logger.warning("Skipping Threads posting due to credential verification failure.")
         
