@@ -90,6 +90,10 @@ class ThreadsService:
         Returns:
             Tuple[bool, Optional[str]]: (Success boolean, First post published ID)
         """
+        if len(threads) > 5:
+            logger.error(f"🚨 Attempted to post {len(threads)} parts to Threads! Max allowed is 5. Aborting post.")
+            return False, None
+
         if settings.DRY_RUN:
             logger.info(f"[DRY RUN] Would post {len(threads)} threads to Threads API.")
             return True, "DRY_RUN_ID"

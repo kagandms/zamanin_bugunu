@@ -150,3 +150,56 @@ class TestCleanMetaText:
         )
         result = ai_service._clean_meta_text(text)
         assert "```" not in result
+
+    def test_removes_arithmetic_scratchpad(self, ai_service):
+        """Should remove arithmetic calculation lines."""
+        text = (
+            "1912 => 214 space 1 => 217\n"
+            "🕊️ Tarihte Bugün (3.8.1936)\n"
+            "Giriş...\n"
+            "yener, 6 => 216\n"
+            "---\n"
+            "Detaylar..."
+        )
+        result = ai_service._clean_meta_text(text)
+        assert "1912 => 214" not in result
+        assert "yener, 6 => 216" not in result
+        assert "Giriş..." in result
+
+
+class TestUnknownTokenAndScratchpadGuard:
+    """Tests for <unk> token rejection and reasoning scratchpad prevention."""
+
+    def test_rejects_unk_token_in_leak_detection(self, ai_service):
+        """Should immediately detect <unk> tokens as leak/corrupted output."""
+        garbage = "<unk><unk><unk> (this is getting messy). This is too time-consuming."
+        assert ai_service._detect_prompt_leak(garbage) is True
+
+    def test_rejects_character_counting_arithmetic(self, ai_service):
+        """Should detect character counting arithmetic scratchpad."""
+        garbage = "yener, 6 => 216 space 1 => 217 1912ye 7 => 217"
+        assert ai_service._detect_prompt_leak(garbage) is True
+
+    def test_rejects_unk_in_turkish_validation(self, ai_service):
+        """Should reject content containing <unk> in Turkish validation."""
+        garbage = (
+            "🕊️ Tarihte Bugün (29.9.1911)\n"
+            "<unk><unk><unk> Osmanlı ordusu savaşa girdi.\n"
+            "---\n"
+            "Sonuç ve detaylar..."
+        )
+        assert ai_service._validate_turkish_content(garbage) is False
+
+    def test_parse_response_caps_at_3_blocks(self, ai_service):
+        """Should never produce more than 3 blocks from AI response."""
+        many_blocks = (
+            "🕊️ Tarihte Bugün (29.9.1911)\nBlok 1\n---\n"
+            "Blok 2\n---\n"
+            "Blok 3\n---\n"
+            "Blok 4\n---\n"
+            "Blok 5\n"
+            "GORSEL_PROMPT: A painting of historical war."
+        )
+        threads, _, _ = ai_service._parse_ai_response(many_blocks, "test", "29.9.1911")
+        assert len(threads) <= 3
+

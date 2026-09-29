@@ -21,10 +21,11 @@ class Settings(BaseSettings):
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: SecretStr
     # Cascade of reliable free models
-    AI_MODEL: str = "google/gemini-2.5-flash-preview:free"
-    BACKUP_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
-    TERTIARY_MODEL: str = "qwen/qwen-2.5-72b-instruct:free"
-    LAST_RESORT_MODEL: str = "openrouter/free"
+    AI_MODEL: str = "inclusionai/ling-3.0-flash-sante:free"
+    BACKUP_MODEL: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    TERTIARY_MODEL: str = "google/gemma-4-31b-it:free"
+    QUATERNARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
+    LAST_RESORT_MODEL: str = "qwen/qwen3.8-27b:free"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

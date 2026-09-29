@@ -161,6 +161,10 @@ async def main():
              if len(t) > settings.MAX_THREAD_LENGTH:
                  t = t[:settings.MAX_THREAD_LENGTH - 3] + "..."
              clean_threads.append(t)
+        # Hard cap: Never allow more than 3 content blocks before footer
+        if len(clean_threads) > 3:
+            logger.warning(f"Capping clean_threads from {len(clean_threads)} to 3 parts.")
+            clean_threads = clean_threads[:3]
         threads = clean_threads
         
         # 6.7 Platform-Specific Footers (Optimized for Conversion)

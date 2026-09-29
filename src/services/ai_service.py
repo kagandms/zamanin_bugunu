@@ -11,7 +11,43 @@ from typing import Tuple, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
-# Prompt leak indicator phrases — if AI echoes these, the output is corrupted
+# Critical leak phrases — if AI contains ANY of these, it's an immediate leak/garbage output
+_CRITICAL_LEAK_PHRASES = [
+    "<unk>",
+    "[unk]",
+    "<pad>",
+    "<s>",
+    "</s>",
+    "given constraints",
+    "too time-consuming",
+    "time consuming",
+    "getting messy",
+    "total <=",
+    "lets count",
+    "let's count",
+    "we need to count",
+    "count characters",
+    "characters precisely",
+    "character count",
+    "is 1 character",
+    "emoji counts",
+    "count as 1",
+    "lets approximate",
+    "let's approximate",
+    "block1",
+    "block2",
+    "block3",
+    "we need to produce",
+    "must follow format",
+    "within constraints",
+    "we need total",
+    "user safety: safe",
+    "chain of thought",
+    "let me draft",
+    "here is the revised",
+]
+
+# Secondary prompt leak indicator phrases — if AI echoes multiple of these, output is corrupted
 _LEAK_PHRASES = [
     "we need to produce",
     "must follow format",
@@ -69,12 +105,34 @@ class AIService:
 
     def _detect_prompt_leak(self, text: str) -> bool:
         """
-        Detects whether the AI output contains leaked prompt/reasoning text.
-        Returns True if a leak is detected.
+        Detects whether the AI output contains leaked prompt/reasoning text,
+        unknown tokens (<unk>), or English calculation scratchpad.
+        Returns True if a leak/corruption is detected.
         """
         lower_text = text.lower()
 
-        # Check 1: Known leak phrases
+        # Check 0: Unknown tokens (<unk>, [unk]) or model degenerate loops
+        if "<unk>" in lower_text or "[unk]" in lower_text or "<pad>" in lower_text:
+            logger.warning("🚨 CRITICAL LEAK: Output contains <unk> or special token artifacts!")
+            return True
+
+        # Check 1: Critical leak / scratchpad phrases (any 1 match = instant rejection)
+        for critical in _CRITICAL_LEAK_PHRASES:
+            if critical in lower_text:
+                logger.warning(f"🚨 CRITICAL PROMPT LEAK: Matched '{critical}'")
+                return True
+
+        # Check 2: Arithmetic counting scratchpad (e.g. '1912 => 214 space 1 => 217')
+        if re.search(r'\d+\s*=>\s*\d+', text):
+            logger.warning("🚨 PROMPT LEAK: Detected character counting arithmetic scratchpad!")
+            return True
+
+        # Check 3: Repetitive word loops (e.g. token stuttering)
+        if re.search(r'(\b\w+\b)(?:\s+\1){4,}', lower_text):
+            logger.warning("🚨 DEGENERATE OUTPUT: Detected repetitive word loop!")
+            return True
+
+        # Check 4: Known secondary leak phrases (2 or more matches)
         matches = [phrase for phrase in _LEAK_PHRASES if phrase in lower_text]
         if len(matches) >= 2:
             logger.warning(
@@ -82,12 +140,12 @@ class AIService:
             )
             return True
 
-        # Check 2: If the text starts with an English reasoning sentence
+        # Check 5: If the text starts with an English reasoning sentence
         first_line = text.split("\n")[0].strip().lower()
         english_starters = [
             "we need", "i need", "let me", "let's", "here is",
             "here's", "okay", "sure", "the event", "this is",
-            "i'll", "i will", "first,", "now,",
+            "i'll", "i will", "first,", "now,", "given", "wait",
         ]
         for starter in english_starters:
             if first_line.startswith(starter):
@@ -101,37 +159,61 @@ class AIService:
     def _validate_turkish_content(self, text: str) -> bool:
         """
         Validates that the AI output is genuine Turkish content, not English
-        reasoning or prompt echoing.
+        reasoning, unknown tokens, or prompt echoing.
         Returns True if valid.
         """
         clean_text = text
         if "GORSEL_PROMPT:" in text:
             clean_text = text.split("GORSEL_PROMPT:")[0]
 
-        # Check 1: Must contain at least some Turkish characters
-        has_turkish_chars = any(c in _TURKISH_CHARS for c in clean_text)
-        if not has_turkish_chars:
-            logger.warning("⚠️ Content validation FAILED: No Turkish characters found.")
+        # Check 0: Reject any unknown/special tokens
+        if "<unk>" in clean_text.lower() or "[unk]" in clean_text.lower() or "<pad>" in clean_text.lower():
+            logger.warning("⚠️ Content validation FAILED: Contains <unk> or special tokens.")
             return False
 
-        # Check 2: Must contain the expected header format (relaxed check)
-        has_header = (
-            "tarihte bugün" in clean_text.lower()
-            or "tarihte bugun" in clean_text.lower()
-            or "🕊️" in clean_text
-            or "📢" in clean_text
-        )
-        if not has_header:
-            logger.warning("⚠️ Content validation FAILED: Missing 'Tarihte Bugün' header.")
+        # Check 1: Structure must contain '---' separator
+        if "---" not in clean_text:
+            logger.warning("⚠️ Content validation FAILED: Missing '---' section separator.")
             return False
 
-        # Check 3: Must contain at least one relevant hashtag
-        has_hashtag = (
-            "#tarih" in clean_text.lower()
-            or "#tarihteneoldu" in clean_text.lower()
-        )
-        if not has_hashtag:
-            logger.info("ℹ️ Content missing hashtags — will be accepted but not ideal.")
+        sections = [s.strip() for s in clean_text.split("---") if s.strip()]
+        if len(sections) < 2 or len(sections) > 4:
+            logger.warning(f"⚠️ Content validation FAILED: Invalid section count ({len(sections)}). Expected 2-4.")
+            return False
+
+        # Check 2: First section MUST have the date header or emoji
+        first_section = sections[0].lower()
+        if "tarihte bugün" not in first_section and "tarihte bugun" not in first_section and "🕊️" not in sections[0]:
+            logger.warning("⚠️ Content validation FAILED: First section missing 'Tarihte Bugün' header.")
+            return False
+
+        # Check 3: Turkish vocabulary check (must match Turkish words, not just single chars)
+        turkish_common_words = {
+            "ve", "bir", "bu", "ile", "için", "olan", "tarihte", "bugün", "yılında",
+            "sonra", "olarak", "savaş", "büyük", "tarafından", "etti", "oldu", "sonuç",
+            "günümüzde", "tarihin", "önemli", "devlet", "imparatorluk", "türk", "osmanlı",
+            "halk", "asker", "gün", "yıl", "dönem", "karar", "dünya"
+        }
+        words = set(re.findall(r'\b[a-zA-ZçÇşŞğĞüÜöÖıİ]{2,}\b', clean_text.lower()))
+        matched_words = words.intersection(turkish_common_words)
+        if len(matched_words) < 2:
+            logger.warning(f"⚠️ Content validation FAILED: Insufficient Turkish vocabulary ({len(matched_words)} matched: {matched_words}).")
+            return False
+
+        # Check 4: English reasoning words ratio (should NOT have English words like constraints, characters, approximate)
+        forbidden_reasoning_words = [
+            "characters", "character", "constraints", "constraint", "approximate",
+            "approx", "counting", "total", "block", "drafting", "separators"
+        ]
+        reasoning_hits = sum(1 for w in forbidden_reasoning_words if w in words)
+        if reasoning_hits >= 2:
+            logger.warning(f"⚠️ Content validation FAILED: Contains English reasoning terminology ({reasoning_hits} hits).")
+            return False
+
+        # Check 5: Length bounds (total text shouldn't be runaway 1500+ chars)
+        if len(clean_text) > 1300:
+            logger.warning(f"⚠️ Content validation FAILED: Content too long ({len(clean_text)} chars).")
+            return False
 
         return True
 
@@ -152,7 +234,7 @@ class AIService:
                 "here is the", "here's the", "here is my",
                 "i've created", "i have created", "let me",
                 "below is", "note:", "note that",
-                "```", "---",
+                "```", "wait block", "block1", "block2", "block3",
             ]
 
             is_meta = False
@@ -161,6 +243,11 @@ class AIService:
                     is_meta = True
                     break
 
+            # Filter out arithmetic scratchpad lines (e.g. '1912 => 214 space 1 => 217')
+            if re.search(r'\d+\s*=>\s*\d+', stripped):
+                is_meta = True
+
+            # Don't skip "---" as it's our legitimate separator
             if stripped == "---":
                 is_meta = False
 
@@ -187,14 +274,13 @@ class AIService:
             "Sen profesyonel bir tarihçi ve sosyal medya uzmanısın. Görevin: "
             "Verilen tarihi olayı Threads ve Telegram kanalları için VİRAL, İLGİ ÇEKİCİ ve DOĞRU bir içerik haline getirmektir."
             "\n\nKURALLAR:"
-            "\n- Metnin GORSEL_PROMPT haricindeki tamamı KESİNLİKLE Türkçe (Turkish) olmalıdır. Diğer dilleri (İngilizce, Rusça vb.) kesinlikle kullanma."
-            "\n- Toplam metin 800 karakteri ASLA geçmemelidir (Telegram limitleri için)."
-            "\n- Threads limitleri için 400 karakteri geçmeyen anlamlı bloklar oluştur (--- işareti ile ayır)."
+            "\n- Metnin GORSEL_PROMPT haricindeki tamamı KESİNLİKLE Türkçe (Turkish) olmalıdır. Diğer dilleri kesinlikle kullanma."
+            "\n- Metin 3 kısa ve akıcı bölümden oluşmalıdır. Bölümleri mutlaka '---' işareti ile ayır."
             "\n- İlk paragrafta vurucu bir giriş yap ve emojiler kullan."
             "\n- Hikaye anlatıcılığı (storytelling) kullan."
-            "\n- Son blokta olayın sonucunu anlattıktan sonra, okuyucunun fikrini soran veya tartışma başlatan merak uyandırıcı, kısa 1 soru cümlesi ekle (Örn: 'Sizce bu karar tarihin akışını nasıl değiştirdi?', 'Bu olayı daha önce duymuş muydunuz?')."
-            "\n- ASLA ve ASLA HTML etiketleri (<b>, <i>, <todaydate> vb.) KULLANMA. Sadece temiz düz metin üret."
-            "\n- ASLA İngilizce açıklama, yorum veya meta-metin ekleme. Sadece son içeriği üret."
+            "\n- Son blokta olayın sonucunu anlattıktan sonra, okuyucuya merak uyandırıcı, kısa 1 soru cümlesi ekle."
+            "\n- ASLA ve ASLA HTML etiketleri (<b>, <i> vb.) KULLANMA. Sadece temiz düz metin üret."
+            "\n- ASLA düşünce (reasoning), scratchpad, karakter sayımı veya İngilizce açıklama yazma."
             "\n- Cevabına doğrudan içerikle başla, öncesinde hiçbir açıklama yapma."
             "\n\nISTENEN FORMAT:"
             f"\n🕊️ Tarihte Bugün ({formatted_date})"
@@ -215,17 +301,25 @@ class AIService:
             ],
             "stream": False,
             "temperature": 0.3,
-            "max_tokens": 1000
+            "max_tokens": 1200,
+            "reasoning": {"effort": "none"}  # Disable OpenRouter reasoning/scratchpad
         }
 
-        # 4-tier cascade of free models
+        # 5-tier cascade of verified free models
         models = [
             settings.AI_MODEL, 
             settings.BACKUP_MODEL, 
-            getattr(settings, "TERTIARY_MODEL", "qwen/qwen-2.5-72b-instruct:free"), 
+            getattr(settings, "TERTIARY_MODEL", "google/gemma-4-31b-it:free"), 
+            getattr(settings, "QUATERNARY_MODEL", "google/gemma-4-26b-a4b-it:free"),
             settings.LAST_RESORT_MODEL
         ]
-        model_names = ["Primary (Gemini)", "Backup (Llama 3.3)", "Tertiary (Qwen 2.5)", "Last Resort"]
+        model_names = [
+            "Primary (Ling 3.0)",
+            "Secondary (Nemotron 3 Super)",
+            "Tertiary (Gemma 4 31B)",
+            "Quaternary (Gemma 4 26B)",
+            "Last Resort (Qwen 3.8)"
+        ]
 
         async with httpx.AsyncClient(timeout=35.0) as client:
             for idx, (model, label) in enumerate(zip(models, model_names)):
@@ -240,15 +334,27 @@ class AIService:
                         continue
 
                     result = response.json()
-                    choices = result.get('choices')
-                    if not choices:
+                    if "error" in result:
+                        logger.warning(f"{label} Model returned error in payload: {result['error']}")
                         continue
-                    content = choices[0]['message']['content'].strip()
+
+                    choices = result.get('choices')
+                    if not choices or not choices[0].get('message'):
+                        continue
+
+                    msg = choices[0]['message']
+                    raw_content = msg.get('content')
+                    if not raw_content or not isinstance(raw_content, str):
+                        logger.warning(f"{label} Model returned empty or non-string content")
+                        continue
+
+                    # Strip any <think> blocks
+                    content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
                     logger.info(f"✅ Got response from {label} Model: {model}")
 
                     # === PROMPT LEAK GUARD ===
                     if self._detect_prompt_leak(content):
-                        logger.warning(f"🚨 {label} Model leaked prompt! Trying next model...")
+                        logger.warning(f"🚨 {label} Model leaked prompt/reasoning! Trying next model...")
                         continue
 
                     # === CLEAN META-TEXT ===
@@ -350,6 +456,14 @@ class AIService:
         else:
             tweets = [content]
 
+        # Enforce maximum 3 content blocks (Header, Story, Conclusion/Question)
+        if len(tweets) > 3:
+            logger.warning(f"AI produced {len(tweets)} blocks. Merging excess into 3 blocks.")
+            part1 = tweets[0]
+            part2 = "\n\n".join(tweets[1:-1])
+            part3 = tweets[-1]
+            tweets = [part1, part2, part3]
+
         # Zero-Tolerance Date Enforcement: Overwrite header with true wall-clock formatted_date
         if tweets and formatted_date:
             first_block = tweets[0]
@@ -367,5 +481,10 @@ class AIService:
                 final_threads.extend(smart_split_text(thread_part, settings.MAX_THREAD_LENGTH - 50))
             else:
                 final_threads.append(thread_part)
+
+        # Hard safety cap on thread count: never allow more than 3 content parts before footer
+        if len(final_threads) > 3:
+            logger.warning(f"final_threads exceeded 3 parts ({len(final_threads)}). Capping to 3.")
+            final_threads = final_threads[:3]
 
         return final_threads, poll_options, image_prompt
