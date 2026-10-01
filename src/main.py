@@ -60,6 +60,13 @@ async def main():
         
         if todays_count >= MAX_DAILY_POSTS:
             logger.info(f"📋 Daily limit reached ({todays_count}/{MAX_DAILY_POSTS}). No more posts today.")
+            if th_ok and not settings.DRY_RUN:
+                try:
+                    logger.info("📊 Running automatic analytics sync for recent Threads posts...")
+                    from src.analytics import run_analytics
+                    await run_analytics()
+                except Exception as e:
+                    logger.warning(f"Opportunistic analytics sync encountered an error: {e}")
             return
         
         logger.info(f"📋 Today's post count: {todays_count}/{MAX_DAILY_POSTS}")
@@ -211,6 +218,13 @@ async def main():
         
         if tg_success or th_success:
             logger.info("✅ Cycle completed successfully.")
+            if th_ok and not settings.DRY_RUN:
+                try:
+                    logger.info("📊 Running automatic analytics sync for recent Threads posts...")
+                    from src.analytics import run_analytics
+                    await run_analytics()
+                except Exception as e:
+                    logger.warning(f"Opportunistic analytics sync encountered an error: {e}")
         else:
             logger.error("❌ Failed to post to any platform.")
             sys.exit(1)
