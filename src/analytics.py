@@ -55,13 +55,16 @@ async def run_analytics():
         recent_posts = await repo.get_posts_for_analytics(limit=10)
         if recent_posts:
             print("📝 TAKİP EDİLEN SON GÖNDERİLER:")
-            print(f"{'ID':<5} | {'Kategori':<16} | {'İzlenme':<8} | {'Beğeni':<7} | {'Yanıt':<6} | {'Repost':<6} | {'İçerik Özeti'}")
-            print("-" * 75)
+            print(f"{'ID':<5} | {'Kategori':<16} | {'İzlenme':<8} | {'Beğeni':<7} | {'Toplam Y.':<9} | {'Organik Y.':<10} | {'İçerik Özeti'}")
+            print("-" * 88)
             for p in recent_posts:
-                snippet = (p.content_text[:35] + "...") if len(p.content_text) > 35 else p.content_text
+                # Kendi zincirimiz ana post hariç 3 parçadır (Part 2, Part 3, Footer).
+                # Dolayısıyla replies > 3 ise dışarıdan gelen gerçek kullanıcı yorumudur.
+                organic_replies = max(0, p.replies - 3)
+                snippet = (p.content_text[:30] + "...") if len(p.content_text) > 30 else p.content_text
                 snippet = snippet.replace("\n", " ")
-                print(f"{p.id:<5} | {p.topic_category or 'GENEL':<16} | {p.views:<8} | {p.likes:<7} | {p.replies:<6} | {p.reposts:<6} | {snippet}")
-            print("-" * 75 + "\n")
+                print(f"{p.id:<5} | {p.topic_category or 'GENEL':<16} | {p.views:<8} | {p.likes:<7} | {p.replies:<9} | {organic_replies:<10} | {snippet}")
+            print("-" * 88 + "\n")
 
         # 2. Konu Bazlı Etkileşim Özeti
         summary = await repo.get_topic_analytics_summary()

@@ -276,21 +276,21 @@ class AIService:
             "\n\nKURALLAR:"
             "\n- Metnin GORSEL_PROMPT haricindeki tamamı KESİNLİKLE Türkçe (Turkish) olmalıdır. Diğer dilleri kesinlikle kullanma."
             "\n- Metin 3 kısa ve akıcı bölümden oluşmalıdır. Bölümleri mutlaka '---' işareti ile ayır."
-            "\n- İlk paragrafta vurucu bir giriş yap ve emojiler kullan."
-            "\n- Hikaye anlatıcılığı (storytelling) kullan."
-            "\n- Son blokta olayın sonucunu anlattıktan sonra, okuyucuya merak uyandırıcı, kısa 1 soru cümlesi ekle."
+            "\n- İLK PARAGRAF (HOOK): Düz bir tarih ansiklopedisi gibi 'tarihte şu oldu' diyerek başlama! Okuyucuyu akışta anında durduracak, merak uyandıran veya ezber bozan çarpıcı bir cümleyle başla ve uygun emojiler kullan."
+            "\n- HİKAYE ANLATIMI: Olayın perde arkasını, kritik kırılma anını ve insan hikayesini sürükleyici bir dille aktar."
+            "\n- SON PARAGRAF (TARTIŞMA TETİKLEYİCİ): Olayın sonucunu anlattıktan sonra, okuyucuları kesinlikle yorum yazmaya zorlayacak, ikiye bölecek veya kişisel fikrini soracak kışkırtıcı net bir soru cümlesi ekle. (Örn: 'Sizce o gün alınan bu karar tarihi bir zorunluluk muydu, yoksa vahim bir hata mıydı? Fikrinizi yorumlarda paylaşın 👇')."
             "\n- ASLA ve ASLA HTML etiketleri (<b>, <i> vb.) KULLANMA. Sadece temiz düz metin üret."
             "\n- ASLA düşünce (reasoning), scratchpad, karakter sayımı veya İngilizce açıklama yazma."
             "\n- Cevabına doğrudan içerikle başla, öncesinde hiçbir açıklama yapma."
             "\n\nISTENEN FORMAT:"
             f"\n🕊️ Tarihte Bugün ({formatted_date})"
-            "\n[İlgi çekici giriş cümlesi]"
+            "\n[Çarpıcı ve merak uyandıran giriş cümlesi (Hook)]"
             "\n#tarih #tarihteneoldu"
             "\n---"
-            "\n[Olayın detayları ve gelişimi]"
+            "\n[Olayın perde arkası ve gelişimi]"
             "\n---"
             "\n[Sonuç ve günümüze etkisi] 📚"
-            "\n[Okuyucuyu yorum yapmaya davet eden kısa soru]"
+            "\n[Okuyucuyu yorum yapmaya zorlayan kışkırtıcı tartışma sorusu 👇]"
             "\nGORSEL_PROMPT: [English Image Prompt]"
         )
 
@@ -402,7 +402,7 @@ class AIService:
 
         part3 = (
             "Geçmişin izleri günümüz dünyasını şekillendirmeye devam ediyor. 📚\n\n"
-            "Siz bu tarihi gelişme hakkında ne düşünüyorsunuz? Yorumlarda paylaşın."
+            "Sizce o günün şartlarında alınan bu karar tarihi bir zorunluluk muydu, yoksa vahim bir hata mıydı? Fikrinizi yorumlarda paylaşın 👇"
         )
 
         tweets = [part1, part2, part3]

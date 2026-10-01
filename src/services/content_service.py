@@ -97,10 +97,10 @@ class ContentService:
         text = item.get('text', '')
         is_tr = self._is_turkish(text)
         if is_tr:
-            score += 30
+            score += 45
         else:
-            # Foreign event penalty unless global superpower milestone
-            score -= 15
+            # Strong penalty for non-Turkish events — Turkish audience rarely engages with foreign history
+            score -= 60
 
         # 1.6 Proven High-Engagement Historical Eras (35+ Age Demographics):
         # 1919-1999 Turkish Era (Atatürk, Darbeler, Gürsel, Menderes, ASALA, Kıbrıs, vb.)
@@ -109,20 +109,20 @@ class ContentService:
             try:
                 i_year = int(year)
                 if is_tr and 1919 <= i_year <= 1999:
-                    score += 40  # Proven #1 engagement category
+                    score += 60  # Proven #1 engagement category (e.g. Kenan Evren / 12 Eylül)
                 elif is_tr and i_year < 1919:
-                    score += 25  # Ottoman / Seljuk history
+                    score += 30  # Ottoman / Seljuk history
                 elif not is_tr and i_year >= 1945 and any(w in text.lower() for w in ['sovyet', 'uzay', 'luna', 'savaş', 'nükleer', 'helsinki']):
-                    score += 25  # Space / Cold War diplomacy milestones
+                    score += 15  # Space / Cold War diplomacy milestones
             except (ValueError, TypeError):
                 pass
 
         # 1.7 Topic Category Bonus (Based on Proven Views & Replies):
         topic = self.classify_topic(text)
         if topic in ('SIYASET', 'AFET_DEPREM'):
-            score += 30
+            score += 40
         elif topic == 'SAVAS_ASKERI':
-            score += 25
+            score += 30
         elif topic in ('KULTUR_SANAT', 'BILIM_TEKNOLOJI'):
             score += 15
 
