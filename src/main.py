@@ -175,8 +175,8 @@ async def main():
         threads = clean_threads
         
         # 6.7 Platform-Specific Footers (Optimized for Conversion)
-        # Threads: native clickable handle mention without clunky URLs
-        threads_footer = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için takipte kalın 👉 @zamaninbugunu"
+        # Threads: native clickable handle mention without clunky URLs, aligned with 35+ age value proposition
+        threads_footer = "Resmi tarihin ötesini, arşiv belgelerini ve unutulan kırılma anlarını her gün keşfetmek için takip edin 👉 @zamaninbugunu"
         threads_payload = list(threads) + [threads_footer]
 
         # Telegram: rich link format
