@@ -92,8 +92,11 @@ _TURKISH_CHARS = set("çÇşŞğĞüÜöÖıİ")
 
 
 class AIService:
-    def __init__(self):
-        self.api_key = settings.OPENROUTER_API_KEY.get_secret_value()
+    def __init__(self) -> None:
+        self.api_key = settings.OPENROUTER_API_KEY.get_secret_value() if settings.OPENROUTER_API_KEY else ""
+        self.last_generation_model: Optional[str] = None
+        self.last_generation_type = "unknown"
+        self.prompt_version = "event-rewrite-v1"
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
         self.headers = {
@@ -268,6 +271,8 @@ class AIService:
         Rewrites the event text using AI to be viral and suitable for social media.
         Returns: (tweet_parts, poll_options, image_prompt)
         """
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
         year_context = f" ({year} yılında gerçekleşti)" if year else ""
 
         system_prompt = (
@@ -366,6 +371,8 @@ class AIService:
                         continue
 
                     logger.info(f"✅ Content passed all validation checks ({label} Model).")
+                    self.last_generation_model = result.get("model") or model
+                    self.last_generation_type = "ai"
                     return self._parse_ai_response(content, original_text, formatted_date)
 
                 except Exception as e:
@@ -431,6 +438,8 @@ class AIService:
             logger.warning(f"AI Service exception: {e}. Activating smart template fallback.")
 
         logger.info("🛡️ Using deterministic smart template fallback.")
+        self.last_generation_model = None
+        self.last_generation_type = "template"
         return self.generate_template_fallback(original_text, formatted_date, year, extract)
 
     def _parse_ai_response(self, content: str, original_text: str, formatted_date: Optional[str] = None):

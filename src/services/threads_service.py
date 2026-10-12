@@ -1,17 +1,57 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from typing import Awaitable, Callable, Optional
+
 import httpx
+
 from src.core.config import settings
 from src.core.logger import logger
-import asyncio
-from typing import List, Optional, Tuple, Dict, Any
+
+
+@dataclass(frozen=True)
+class PublishedThreadPart:
+    external_id: Optional[str]
+    part_index: int
+    parent_external_id: Optional[str]
+    text: str
+    media_type: str
+    is_main: bool
+    published_at: Optional[datetime]
+    published_at_source: Optional[str]
+    status: str = "published"
+
+
+@dataclass(frozen=True)
+class ThreadPostResult:
+    status: str
+    main_post_id: Optional[str]
+    parts: tuple[PublishedThreadPart, ...]
+    error_detail: Optional[str] = None
+
+
+PartCallback = Callable[[PublishedThreadPart], Awaitable[None]]
+TimestampCallback = Callable[[PublishedThreadPart], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class ThreadPublishCallbacks:
+    on_part_published: Optional[PartCallback] = None
+    on_part_timestamp_refined: Optional[TimestampCallback] = None
+
 
 class ThreadsService:
-    def __init__(self):
+    def __init__(self) -> None:
+        if settings.THREADS_ACCESS_TOKEN is None or settings.THREADS_USER_ID is None:
+            raise ValueError("THREADS_ACCESS_TOKEN and THREADS_USER_ID are required for Threads operations.")
         self.access_token = settings.THREADS_ACCESS_TOKEN.get_secret_value()
         self.user_id = settings.THREADS_USER_ID.get_secret_value()
         self.api_url = "https://graph.threads.net/v1.0"
 
     async def verify_credentials(self) -> bool:
-        """Verifies Threads API Credentials."""
+        """Check whether the configured Threads token can access its account."""
         url = f"{self.api_url}/me?access_token={self.access_token}"
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
@@ -19,200 +59,277 @@ class ThreadsService:
                 if response.status_code == 200:
                     logger.info("Connected to Threads API successfully.")
                     return True
-                else:
-                    logger.error(f"Threads Auth Verification Failed: {response.text}")
-            except Exception as e:
-                logger.error(f"Threads Auth Verification Failed: {e}")
+                logger.error("Threads credential check failed with HTTP %s.", response.status_code)
+            except httpx.HTTPError as error:
+                logger.error("Threads credential check failed (%s).", type(error).__name__)
         return False
 
     async def refresh_access_token(self) -> Optional[str]:
-        """
-        Refreshes a long-lived Threads access token, extending its validity by another 60 days.
-        Meta Endpoint: GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token={token}
-        """
+        """Refresh the configured long-lived Threads token."""
         url = f"https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token={self.access_token}"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    new_token = data.get("access_token")
-                    expires_in = data.get("expires_in", 0)
-                    days = expires_in // 86400
-                    logger.info(f"✅ Threads access token successfully refreshed! Valid for ~{days} days.")
-                    return new_token
-                else:
-                    logger.warning(f"Threads token refresh returned HTTP {resp.status_code}: {resp.text}")
-        except Exception as e:
-            logger.error(f"Failed to refresh Threads access token: {e}")
+                response = await client.get(url)
+                if response.status_code == 200:
+                    return response.json().get("access_token")
+                logger.warning("Threads token refresh returned HTTP %s.", response.status_code)
+        except httpx.HTTPError as error:
+            logger.error("Threads token refresh failed (%s).", type(error).__name__)
         return None
 
-    async def _wait_for_container_status(self, container_id: str, max_timeout: int = 45, poll_interval: int = 3) -> bool:
-        """
-        Polls Meta Graph API for container processing status.
-        Replaces hardcoded sleep with dynamic readiness check.
-        Returns True if FINISHED, False if ERROR or timeout.
-        """
+    async def _wait_for_container_status(
+        self, container_id: str, max_timeout: int = 45, poll_interval: int = 3
+    ) -> bool:
+        """Poll until an image container is ready, failed, or timed out."""
         url = f"{self.api_url}/{container_id}?fields=status,error_message&access_token={self.access_token}"
-        elapsed = 0
-        while elapsed < max_timeout:
+        for _ in range(max_timeout // poll_interval):
             await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        status = data.get("status")
-                        if status == "FINISHED":
-                            logger.info(f"✅ Meta container {container_id} is ready in ~{elapsed}s.")
-                            return True
-                        elif status == "ERROR":
-                            logger.error(f"❌ Meta container processing failed: {data.get('error_message')}")
-                            return False
-                        else:
-                            logger.debug(f"Container {container_id} status: {status} ({elapsed}s elapsed)...")
-                    else:
-                        logger.warning(f"Container status check HTTP {resp.status_code}: {resp.text}")
-            except Exception as e:
-                logger.warning(f"Error checking container status: {e}")
-
-        logger.warning(f"Container {container_id} wait timed out after {max_timeout}s.")
+                    response = await client.get(url)
+                    if response.status_code != 200:
+                        continue
+                    status = response.json().get("status")
+                    if status == "FINISHED":
+                        return True
+                    if status == "ERROR":
+                        return False
+            except httpx.HTTPError as error:
+                logger.warning("Threads container status check failed (%s).", type(error).__name__)
         return False
 
-    async def post_thread(self, threads: List[str], image_url: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-        """
-        Posts a chain of threads to Meta's Threads API.
-        Meta API requires:
-        1. Create Media Container (POST /{user_id}/threads)
-        2. Publish Media Container (POST /{user_id}/threads_publish)
-        
-        Returns:
-            Tuple[bool, Optional[str]]: (Success boolean, First post published ID)
-        """
-        if len(threads) > 5:
-            logger.error(f"🚨 Attempted to post {len(threads)} parts to Threads! Max allowed is 5. Aborting post.")
-            return False, None
-
+    async def post_thread(
+        self,
+        threads: list[str],
+        image_url: Optional[str] = None,
+        callbacks: Optional[ThreadPublishCallbacks] = None,
+    ) -> ThreadPostResult:
+        """Publish a thread and return each artifact as it is confirmed."""
+        if not threads or len(threads) > 5:
+            return ThreadPostResult("failed", None, (), "Threads allows one to five parts.")
         if settings.DRY_RUN:
-            logger.info(f"[DRY RUN] Would post {len(threads)} threads to Threads API.")
-            return True, "DRY_RUN_ID"
+            logger.info("[DRY RUN] Would post %s Threads parts.", len(threads))
+            return ThreadPostResult("dry_run", None, (), "dry_run")
 
-        last_id = None
-        first_post_id = None
-        
-        for i, text in enumerate(threads):
-            media_type = "IMAGE" if (i == 0 and image_url) else "TEXT"
-            payload = {
-                "media_type": media_type,
-                "text": text,
-                "access_token": self.access_token
-            }
-            if media_type == "IMAGE":
-                payload["image_url"] = image_url
+        parts: list[PublishedThreadPart] = []
+        parent_id: Optional[str] = None
+        for index, part_text in enumerate(threads):
+            use_image = index == 0 and bool(image_url)
+            payload = self._build_container_payload(part_text, parent_id, image_url if use_image else None)
+            container_id, error = await self._create_container(payload)
+            if container_id is None and use_image:
+                payload = self._build_container_payload(part_text, parent_id, None)
+                container_id, error = await self._create_container(payload)
+                use_image = False
+            if container_id is None:
+                await self._record_unpublished_part(
+                    callbacks, index, parent_id, part_text, "TEXT" if not use_image else "IMAGE", "failed"
+                )
+                return self._partial_result(parts, error or "container_creation_failed")
+            if use_image and not await self._wait_for_container_status(container_id):
+                payload = self._build_container_payload(part_text, parent_id, None)
+                container_id, error = await self._create_container(payload)
+                use_image = False
+                if container_id is None:
+                    await self._record_unpublished_part(callbacks, index, parent_id, part_text, "TEXT", "failed")
+                    return self._partial_result(parts, error or "image_container_failed")
 
-            if last_id:
-                payload["reply_to_id"] = last_id
-            
-            # Step 1: Create Media Container
-            create_url = f"{self.api_url}/{self.user_id}/threads"
-            container_id = await self._make_request(create_url, payload)
-            
-            if not container_id:
-                # Fallback: if IMAGE failed, try as TEXT
-                if media_type == "IMAGE":
-                    logger.warning("IMAGE container creation failed. Retrying as TEXT only...")
-                    payload.pop("image_url", None)
-                    payload["media_type"] = "TEXT"
-                    container_id = await self._make_request(create_url, payload)
-                if not container_id:
-                    return False, None
-
-            # Dynamic polling instead of hardcoded sleep
-            if media_type == "IMAGE" and "image_url" in payload:
-                logger.info("Polling Meta container status until image is processed...")
-                container_ready = await self._wait_for_container_status(container_id)
-                if not container_ready:
-                    logger.warning("Container processing failed/timed out. Falling back to TEXT...")
-                    payload.pop("image_url", None)
-                    payload["media_type"] = "TEXT"
-                    container_id = await self._make_request(create_url, payload)
-                    if not container_id:
-                        return False, None
-
-            # Step 2: Publish Media Container
-            publish_url = f"{self.api_url}/{self.user_id}/threads_publish"
-            publish_payload = {
-                "creation_id": container_id,
-                "access_token": self.access_token
-            }
-            
-            published_id = await self._make_request(publish_url, publish_payload)
-
-            # Fallback: if IMAGE publish failed, retry entire post as TEXT
-            if not published_id and media_type == "IMAGE":
-                logger.warning("IMAGE publish failed! Retrying entire post as TEXT only...")
-                text_payload = {
-                    "media_type": "TEXT",
-                    "text": text,
-                    "access_token": self.access_token
-                }
-                if last_id:
-                    text_payload["reply_to_id"] = last_id
-                text_container_id = await self._make_request(create_url, text_payload)
+            published_id, is_uncertain, error = await self._publish_container(container_id)
+            if published_id is None and use_image and not is_uncertain:
+                text_container_id, error = await self._create_container(
+                    self._build_container_payload(part_text, parent_id, None)
+                )
                 if text_container_id:
-                    await asyncio.sleep(2)
-                    text_publish_payload = {
-                        "creation_id": text_container_id,
-                        "access_token": self.access_token
-                    }
-                    published_id = await self._make_request(publish_url, text_publish_payload)
+                    published_id, is_uncertain, error = await self._publish_container(text_container_id)
+                use_image = False
+            if published_id is None:
+                failure_status = "unknown" if is_uncertain else "failed"
+                await self._record_unpublished_part(
+                    callbacks, index, parent_id, part_text,
+                    "IMAGE" if use_image else "TEXT", failure_status,
+                )
+                if is_uncertain and not parts:
+                    return ThreadPostResult("unknown", None, (), error)
+                return self._partial_result(parts, error or "publish_failed")
 
-            if not published_id:
-                return False, None
+            confirmed_at = datetime.now(timezone.utc)
+            part = PublishedThreadPart(
+                external_id=published_id,
+                part_index=index,
+                parent_external_id=parent_id,
+                text=part_text,
+                media_type="IMAGE" if use_image else "TEXT",
+                is_main=index == 0,
+                published_at=confirmed_at,
+                published_at_source="client_observed",
+            )
+            parts.append(part)
+            if callbacks and callbacks.on_part_published:
+                await callbacks.on_part_published(part)
+            published_at, time_source = await self._get_published_at(published_id, confirmed_at)
+            if time_source == "threads_media_timestamp":
+                part = replace(part, published_at=published_at, published_at_source=time_source)
+                parts[-1] = part
+                if callbacks and callbacks.on_part_timestamp_refined:
+                    await callbacks.on_part_timestamp_refined(part)
+            parent_id = published_id
+        return ThreadPostResult("published", parts[0].external_id, tuple(parts))
 
-            if first_post_id is None:
-                first_post_id = published_id
+    def _build_container_payload(
+        self, text: str, parent_id: Optional[str], image_url: Optional[str]
+    ) -> dict[str, str]:
+        payload = {"media_type": "IMAGE" if image_url else "TEXT", "text": text,
+                   "access_token": self.access_token}
+        if parent_id:
+            payload["reply_to_id"] = parent_id
+        if image_url:
+            payload["image_url"] = image_url
+        return payload
 
-            last_id = published_id
-            await asyncio.sleep(2)
+    async def _create_container(self, payload: dict[str, str]) -> tuple[Optional[str], Optional[str]]:
+        url = f"{self.api_url}/{self.user_id}/threads"
+        for attempt in range(1, settings.MAX_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, data=payload)
+                if response.status_code == 200:
+                    return response.json().get("id"), None
+                logger.error("Threads container creation returned HTTP %s.", response.status_code)
+            except httpx.HTTPError as error:
+                logger.warning("Threads container creation failed (%s).", type(error).__name__)
+            if attempt < settings.MAX_RETRIES:
+                await asyncio.sleep(settings.RETRY_DELAY * attempt)
+        return None, "container_creation_failed"
 
-        return True, first_post_id
+    async def _publish_container(self, container_id: str) -> tuple[Optional[str], bool, Optional[str]]:
+        """Publish once; a transport timeout remains unknown to avoid duplicate publication."""
+        url = f"{self.api_url}/{self.user_id}/threads_publish"
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url, data={"creation_id": container_id, "access_token": self.access_token}
+                )
+            if response.status_code == 200:
+                post_id = response.json().get("id")
+                if post_id:
+                    return post_id, False, None
+                return None, True, "publish_missing_id_unknown"
+            if response.status_code >= 500:
+                logger.error("Threads publish returned HTTP %s; publication state is unknown.", response.status_code)
+                return None, True, f"publish_http_{response.status_code}_unknown"
+            logger.error("Threads publish returned HTTP %s.", response.status_code)
+            return None, False, f"publish_http_{response.status_code}"
+        except httpx.TimeoutException as error:
+            logger.error("Threads publish timed out; publication state is unknown (%s).", type(error).__name__)
+            return None, True, "publish_timeout_unknown"
+        except httpx.HTTPError as error:
+            logger.error("Threads publish transport failed; publication state is unknown (%s).", type(error).__name__)
+            return None, True, "publish_transport_unknown"
+        except (ValueError, AttributeError) as error:
+            logger.error("Threads publish returned an unreadable response (%s).", type(error).__name__)
+            return None, True, "publish_response_unknown"
 
-    async def get_post_insights(self, post_id: str) -> Optional[Dict[str, int]]:
-        """
-        Fetches metrics (views, likes, replies, reposts, quotes) for a given Threads post.
-        """
+    async def _get_published_at(self, post_id: str, confirmed_at: datetime) -> tuple[datetime, str]:
+        """Prefer Meta's media timestamp and preserve a response-time fallback label."""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    f"{self.api_url}/{post_id}",
+                    params={"fields": "timestamp", "access_token": self.access_token},
+                )
+            if response.status_code == 200:
+                timestamp = response.json().get("timestamp")
+                if isinstance(timestamp, str):
+                    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if parsed.tzinfo is not None:
+                        return parsed.astimezone(timezone.utc), "threads_media_timestamp"
+        except (httpx.HTTPError, ValueError) as error:
+            logger.warning("Unable to read Threads publication timestamp (%s).", type(error).__name__)
+        return confirmed_at, "client_observed"
+
+    async def _record_unpublished_part(
+        self,
+        callbacks: Optional[ThreadPublishCallbacks],
+        part_index: int,
+        parent_id: Optional[str],
+        text: str,
+        media_type: str,
+        status: str,
+    ) -> None:
+        if callbacks is None or callbacks.on_part_published is None:
+            return
+        part = PublishedThreadPart(
+            external_id=None, part_index=part_index, parent_external_id=parent_id,
+            text=text, media_type=media_type, is_main=part_index == 0,
+            published_at=None, published_at_source=None, status=status,
+        )
+        await callbacks.on_part_published(part)
+
+    @staticmethod
+    def _partial_result(parts: list[PublishedThreadPart], error: str) -> ThreadPostResult:
+        status = "partial" if parts else "failed"
+        return ThreadPostResult(status, parts[0].external_id if parts else None, tuple(parts), error)
+
+    async def get_post_insights(self, post_id: str) -> dict[str, object]:
+        """Fetch supported metrics without converting absent metrics into zero."""
         metrics = "views,likes,replies,reposts,quotes"
         url = f"{self.api_url}/{post_id}/insights?metric={metrics}&access_token={self.access_token}"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    data = resp.json().get("data", [])
-                    result = {}
-                    for item in data:
-                        metric_name = item.get("name")
-                        values = item.get("values", [])
-                        if values:
-                            result[metric_name] = values[0].get("value", 0)
-                    return result
-                else:
-                    logger.warning(f"Insights API HTTP {resp.status_code} for {post_id}: {resp.text}")
-        except Exception as e:
-            logger.error(f"Failed to fetch insights for {post_id}: {e}")
-        return None
+                response = await client.get(url)
+            if response.status_code == 200:
+                result: dict[str, object] = {"status": "success", "scope": "post_insights"}
+                for item in response.json().get("data", []):
+                    values = item.get("values", [])
+                    result[item.get("name")] = values[0].get("value") if values else None
+                return result
+            return {"status": "error", "scope": "post_insights", "error": f"http_{response.status_code}"}
+        except httpx.HTTPError as error:
+            logger.error("Threads insights request failed (%s).", type(error).__name__)
+            return {"status": "error", "scope": "post_insights", "error": "network_error"}
 
-    async def _make_request(self, url: str, payload: dict) -> Optional[str]:
-        for attempt in range(1, settings.MAX_RETRIES + 1):
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                try:
-                    response = await client.post(url, data=payload)
-                    if response.status_code == 200:
-                        return response.json().get("id")
-                    else:
-                        logger.error(f"Threads API Error ({url}): {response.text}")
-                except Exception as e:
-                    logger.error(f"Threads API Request Failed: {e}")
-            await asyncio.sleep(settings.RETRY_DELAY * attempt)
-        return None
+    async def get_post_replies(self, post_id: str) -> dict[str, object]:
+        """Count complete, verified direct replies; pagination failures remain unknown."""
+        from src.services.reply_pagination import (
+            ReplyCounts, ReplyPaginationError, count_verified_replies, parse_reply_page,
+        )
+
+        cursor: Optional[str] = None
+        visited_cursors: set[str] = set()
+        counts = ReplyCounts()
+        for _ in range(100):
+            payload = await self._fetch_reply_page(post_id, cursor)
+            if isinstance(payload, dict) and payload.get("status") in ("error", "permission_error"):
+                return payload
+            try:
+                page = parse_reply_page(payload, f"{self.api_url}/{post_id}/replies")
+                counts = count_verified_replies(counts, page, post_id)
+            except ReplyPaginationError as error:
+                return {"status":"unknown", "error":str(error), "scope":"thread_replies_direct"}
+            if page.next_cursor is None:
+                return {"status":"success", "external_replies":counts.external,
+                        "own_replies":counts.own, "scope":"thread_replies_direct"}
+            if page.next_cursor in visited_cursors:
+                return {"status":"unknown", "error":"reply_cursor_repeated", "scope":"thread_replies_direct"}
+            cursor = page.next_cursor
+            visited_cursors.add(cursor)
+        return {"status":"unknown", "error":"reply_pagination_limit", "scope":"thread_replies_direct"}
+
+    async def _fetch_reply_page(self, post_id: str, cursor: Optional[str]) -> object:
+        params = {"fields":"id,is_reply_owned_by_me,replied_to{id}", "reverse":"false",
+                  "limit":"100", "access_token":self.access_token}
+        if cursor:
+            params["after"] = cursor
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.api_url}/{post_id}/replies", params=params)
+            if response.status_code != 200:
+                return {"status":"permission_error" if response.status_code in (401,403) else "error",
+                        "error":f"http_{response.status_code}", "scope":"thread_replies_direct"}
+            return response.json()
+        except httpx.HTTPError as error:
+            logger.error("Threads reply lookup failed (%s).", type(error).__name__)
+            return {"status":"error", "error":"network_error", "scope":"thread_replies_direct"}
+        except (ValueError, TypeError) as error:
+            logger.error("Threads reply response invalid (%s).", type(error).__name__)
+            return {"status":"unknown", "error":"reply_response_malformed", "scope":"thread_replies_direct"}
