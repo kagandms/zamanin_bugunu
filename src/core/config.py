@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr
 
@@ -11,15 +11,15 @@ class Settings(BaseSettings):
     DRY_RUN: bool = False  # If True, no tweets will be sent
     
     # Telegram API Credentials
-    TELEGRAM_BOT_TOKEN: SecretStr
-    TELEGRAM_CHANNEL_ID: str
+    TELEGRAM_BOT_TOKEN: Optional[SecretStr] = None
+    TELEGRAM_CHANNEL_ID: Optional[str] = None
     
     # Threads API Credentials
-    THREADS_ACCESS_TOKEN: SecretStr
-    THREADS_USER_ID: SecretStr
+    THREADS_ACCESS_TOKEN: Optional[SecretStr] = None
+    THREADS_USER_ID: Optional[SecretStr] = None
     
     # AI Provider (OpenRouter)
-    OPENROUTER_API_KEY: SecretStr
+    OPENROUTER_API_KEY: Optional[SecretStr] = None
     # Cascade of reliable free models
     AI_MODEL: str = "inclusionai/ling-3.0-flash-sante:free"
     BACKUP_MODEL: str = "nvidia/nemotron-3-super-120b-a12b:free"
@@ -46,4 +46,4 @@ class Settings(BaseSettings):
         case_sensitive=True
     )
 
-settings = Settings()
+settings = Settings(_env_file=None if os.getenv("ZAMANIN_ANALYTICS_CLI") == "1" else ".env")

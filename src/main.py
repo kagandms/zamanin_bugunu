@@ -1,18 +1,23 @@
+from __future__ import annotations
+
 import asyncio
+import os
 import sys
 import random
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from src.core.config import settings
 from src.core.logger import logger
 from src.data.database import init_db, AsyncSessionLocal
 from src.data.repository import HistoryRepository
+from src.data.models import EventReservation, PostMetadata, PublicationPartData
 from src.services.content_service import ContentService
 from src.services.ai_service import AIService
 from src.services.image_service import ImageService
-from src.services.telegram_service import TelegramService
-from src.services.threads_service import ThreadsService
+from src.services.telegram_service import TelegramPart, TelegramService
+from src.services.threads_service import PublishedThreadPart, ThreadPublishCallbacks, ThreadsService
 
-async def main():
+async def main() -> None:
     logger.info("🚀 Starting Zamanın Bugünü (Elite Edition)")
     
     # 1. Initialize DB and run safe schema migration
@@ -22,12 +27,12 @@ async def main():
     content_service = ContentService()
     ai_service = AIService()
     image_service = ImageService()
-    telegram_service = TelegramService()
-    threads_service = ThreadsService()
+    telegram_service = TelegramService() if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHANNEL_ID else None
+    threads_service = ThreadsService() if settings.THREADS_ACCESS_TOKEN and settings.THREADS_USER_ID else None
     
     # Verify Credentials
-    tg_ok = await telegram_service.verify_credentials()
-    th_ok = await threads_service.verify_credentials()
+    tg_ok = await telegram_service.verify_credentials() if telegram_service else False
+    th_ok = await threads_service.verify_credentials() if threads_service else False
     
     if not tg_ok and not th_ok:
         logger.critical("All API Authentications Failed (both Telegram and Threads). Exiting.")
@@ -56,23 +61,16 @@ async def main():
         # 3. Daily Post Limit Check
         MAX_DAILY_POSTS = 4
         todays_posts = await repo.get_todays_posts()
-        todays_count = len(todays_posts)
+        todays_count = await repo.get_daily_published_count()
         
         if todays_count >= MAX_DAILY_POSTS:
             logger.info(f"📋 Daily limit reached ({todays_count}/{MAX_DAILY_POSTS}). No more posts today.")
-            if th_ok and not settings.DRY_RUN:
-                try:
-                    logger.info("📊 Running automatic analytics sync for recent Threads posts...")
-                    from src.analytics import run_analytics
-                    await run_analytics()
-                except Exception as e:
-                    logger.warning(f"Opportunistic analytics sync encountered an error: {e}")
             return
         
         logger.info(f"📋 Today's post count: {todays_count}/{MAX_DAILY_POSTS}")
 
         # 4. Fetch Events
-        today = datetime.now()
+        today = datetime.now(ZoneInfo(settings.TIMEZONE))
         logger.info(f"Fetching events for {today.day}.{today.month}...")
         events = await content_service.fetch_events(today.month, today.day)
         
@@ -184,47 +182,106 @@ async def main():
         telegram_payload = list(threads) + [telegram_footer]
 
         # 7. Reserve this event in DB BEFORE posting (prevents duplicate selection)
-        entry_id = await repo.add_entry(
+        selected_page = (selected_event.get("pages") or [{}])[0]
+        content_urls = selected_page.get("content_urls") or {}
+        desktop_url = content_urls.get("desktop") or {}
+        source_url = desktop_url.get("page")
+        source_id = selected_page.get("pageid") or selected_page.get("title")
+        if selected_page.get("thumbnail"):
+            image_source = "wikipedia_thumbnail"
+        elif selected_page.get("originalimage"):
+            image_source = "wikipedia_original"
+        elif image_prompt:
+            image_source = "ai_generated"
+        else:
+            image_source = "event_fallback"
+        image_size = None
+        if filename:
+            try:
+                image_size = os.path.getsize(filename)
+            except OSError as error:
+                logger.warning(f"Unable to read downloaded image size: {error}")
+        entry_id = await repo.reserve_event(EventReservation(
             text=raw_text,
             category=selected_event.get('_category'),
-            tweet_id="RESERVED",
-            topic_category=topic
-        )
+            legacy_tweet_id="RESERVED",
+            topic_category=topic,
+            metadata=PostMetadata(
+                event_year=str(year) if year is not None else None,
+                source_url=source_url,
+                source_id=str(source_id) if source_id is not None else None,
+                published_text="\n\n".join(threads_payload),
+                prompt_version=ai_service.prompt_version,
+                ai_model=ai_service.last_generation_model,
+                generation_type=ai_service.last_generation_type,
+                selected_image_source=image_source if image_url else None,
+                selected_image_url=image_url,
+                selected_image_local_path=filename,
+                selected_image_bytes=image_size,
+            ),
+        ))
         logger.info(f"📝 Event reserved in history DB (ID: {entry_id}, Topic: {topic}) to prevent duplicates.")
+
+        tg_publication_id = await repo.reserve_publication(entry_id, "telegram")
+        th_publication_id = await repo.reserve_publication(entry_id, "threads")
 
         # 8. Post to Telegram
         tg_success = False
         if tg_ok:
             logger.info("Posting to Telegram...")
             telegram_text = "\n\n".join(telegram_payload)
-            tg_success = await telegram_service.send_post(telegram_text, filename)
+
+            async def persist_telegram_part(part: TelegramPart) -> None:
+                await repo.record_part(PublicationPartData(
+                    publication_id=tg_publication_id, platform="telegram", external_id=part.external_id,
+                    part_index=part.part_index, parent_external_id=None, text=part.text,
+                    media_type=part.media_type, is_main=part.is_main,
+                    published_at=part.published_at, published_at_source=part.published_at_source,
+                    status=part.status,
+                ))
+
+            telegram_result = await telegram_service.publish_post(telegram_text, filename, persist_telegram_part)
+            tg_success = any(part.is_main and part.status == "published" for part in telegram_result.parts)
+            await repo.finish_publication(tg_publication_id, telegram_result.status, telegram_result.error_detail)
         else:
             logger.warning("Skipping Telegram posting due to credential verification failure.")
+            await repo.finish_publication(tg_publication_id, "failed", "credentials_unavailable")
         
         # 9. Post to Threads
         th_success = False
-        th_post_id = None
         if th_ok:
             logger.info("Posting to Threads...")
-            th_success, th_post_id = await threads_service.post_thread(threads_payload, image_url)
-            if th_success and th_post_id:
-                await repo.update_threads_info(entry_id, th_post_id, topic)
-                logger.info(f"💾 Updated DB entry {entry_id} with published Threads post ID: {th_post_id}")
+            async def persist_threads_part(part: PublishedThreadPart) -> None:
+                await repo.record_part(PublicationPartData(
+                    publication_id=th_publication_id, platform="threads", external_id=part.external_id,
+                    part_index=part.part_index, parent_external_id=part.parent_external_id,
+                    text=part.text, media_type=part.media_type, is_main=part.is_main,
+                    published_at=part.published_at, published_at_source=part.published_at_source,
+                    status=part.status,
+                ))
+
+            async def refine_threads_timestamp(part: PublishedThreadPart) -> None:
+                await repo.record_part(PublicationPartData(
+                    publication_id=th_publication_id, platform="threads", external_id=part.external_id,
+                    part_index=part.part_index, parent_external_id=part.parent_external_id,
+                    text=part.text, media_type=part.media_type, is_main=part.is_main,
+                    published_at=part.published_at, published_at_source=part.published_at_source,
+                    status=part.status,
+                ))
+
+            thread_callbacks = ThreadPublishCallbacks(persist_threads_part, refine_threads_timestamp)
+            threads_result = await threads_service.post_thread(threads_payload, image_url, thread_callbacks)
+            th_success = any(part.is_main and part.status == "published" for part in threads_result.parts)
+            await repo.finish_publication(th_publication_id, threads_result.status, threads_result.error_detail)
         else:
             logger.warning("Skipping Threads posting due to credential verification failure.")
+            await repo.finish_publication(th_publication_id, "failed", "credentials_unavailable")
         
         if filename:
             image_service.cleanup(filename)
         
-        if tg_success or th_success:
-            logger.info("✅ Cycle completed successfully.")
-            if th_ok and not settings.DRY_RUN:
-                try:
-                    logger.info("📊 Running automatic analytics sync for recent Threads posts...")
-                    from src.analytics import run_analytics
-                    await run_analytics()
-                except Exception as e:
-                    logger.warning(f"Opportunistic analytics sync encountered an error: {e}")
+        if tg_success or th_success or settings.DRY_RUN:
+            logger.info("✅ Cycle completed; at least one main post was published or dry-run is active.")
         else:
             logger.error("❌ Failed to post to any platform.")
             sys.exit(1)
@@ -236,3 +293,4 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user.")
     except Exception as e:
         logger.exception(f"Unhandled Exception: {e}")
+        sys.exit(1)

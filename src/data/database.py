@@ -1,52 +1,105 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
 from src.core.config import settings
 from src.data.models import Base
-from src.core.logger import logger
 
-# Create Async Engine
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG, # Log SQL queries in debug mode
-)
 
-# Async Session Factory
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
+AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
-async def migrate_db():
-    """Safely adds missing columns to existing SQLite table without losing data."""
-    async with engine.begin() as conn:
-        try:
-            result = await conn.execute(text("PRAGMA table_info(post_history);"))
-            existing_columns = {row[1] for row in result.fetchall()}
-            
-            new_columns = [
-                ("threads_post_id", "TEXT"),
-                ("topic_category", "TEXT"),
-                ("views", "INTEGER DEFAULT 0"),
-                ("likes", "INTEGER DEFAULT 0"),
-                ("replies", "INTEGER DEFAULT 0"),
-                ("reposts", "INTEGER DEFAULT 0"),
-                ("last_synced_at", "DATETIME")
-            ]
-            for col_name, col_type in new_columns:
-                if col_name not in existing_columns:
-                    logger.info(f"Database migration: adding column {col_name} to post_history...")
-                    await conn.execute(text(f"ALTER TABLE post_history ADD COLUMN {col_name} {col_type};"))
-        except Exception as e:
-            logger.warning(f"Database migration note: {e}")
+POST_HISTORY_COLUMNS = {
+    "threads_post_id": "TEXT",
+    "topic_category": "TEXT",
+    "views": "INTEGER DEFAULT 0",
+    "likes": "INTEGER DEFAULT 0",
+    "replies": "INTEGER DEFAULT 0",
+    "reposts": "INTEGER DEFAULT 0",
+    "last_synced_at": "DATETIME",
+    "event_year": "TEXT",
+    "source_url": "TEXT",
+    "source_id": "TEXT",
+    "published_text": "TEXT",
+    "prompt_version": "TEXT",
+    "ai_model": "TEXT",
+    "generation_type": "TEXT",
+    "selected_image_source": "TEXT",
+    "selected_image_url": "TEXT",
+    "selected_image_local_path": "TEXT",
+    "selected_image_bytes": "INTEGER",
+    "experiment_id": "TEXT",
+    "variant": "TEXT",
+    "publication_status": "TEXT",
+}
 
-async def init_db():
-    """Initializes the database (creates tables if not exist and migrates schema)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await migrate_db()
 
-async def get_db_session() -> AsyncSession:
-    """Dependency for getting a DB session."""
+async def migrate_db(database_engine: AsyncEngine = engine) -> None:
+    """Apply idempotent additive SQLite migrations and preserve legacy records."""
+    async with database_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+        table_result = await connection.execute(text("PRAGMA table_info(post_history)"))
+        existing_columns = {row[1] for row in table_result.fetchall()}
+        for column_name, column_type in POST_HISTORY_COLUMNS.items():
+            if column_name not in existing_columns:
+                await connection.execute(
+                    text(f"ALTER TABLE post_history ADD COLUMN {column_name} {column_type}")
+                )
+        await connection.execute(
+            text("UPDATE post_history SET publication_status = 'unknown' WHERE publication_status IS NULL")
+        )
+        snapshot_columns = await connection.execute(text("PRAGMA table_info(metric_snapshots)"))
+        existing_snapshot_columns = {row[1] for row in snapshot_columns.fetchall()}
+        for column_name in ("selected_at", "request_started_at", "reply_observed_at"):
+            if column_name not in existing_snapshot_columns:
+                await connection.execute(text(
+                    f"ALTER TABLE metric_snapshots ADD COLUMN {column_name} DATETIME"
+                ))
+        if "reply_error_code" not in existing_snapshot_columns:
+            await connection.execute(text("ALTER TABLE metric_snapshots ADD COLUMN reply_error_code TEXT"))
+        for operation in ("UPDATE", "DELETE"):
+            await connection.execute(text(f"""
+                CREATE TRIGGER IF NOT EXISTS metric_attempts_no_{operation.lower()}
+                BEFORE {operation} ON metric_attempts
+                BEGIN SELECT RAISE(ABORT, 'metric attempts are immutable'); END
+            """))
+        await connection.execute(text("""
+            INSERT INTO platform_publications (event_id, platform, status, reserved_at)
+            SELECT h.id, 'threads', 'unknown', h.posted_at
+            FROM post_history AS h
+            WHERE h.threads_post_id IS NOT NULL
+              AND h.threads_post_id NOT IN ('', 'RESERVED', 'DRY_RUN_ID')
+              AND NOT EXISTS (
+                  SELECT 1 FROM platform_publications AS p
+                  WHERE p.event_id = h.id AND p.platform = 'threads'
+              )
+        """))
+        await connection.execute(text("""
+            INSERT INTO publication_parts (
+                publication_id, platform, external_id, part_index, is_main, status
+            )
+            SELECT p.id, 'threads', h.threads_post_id, 0, 1, 'unknown'
+            FROM post_history AS h
+            JOIN platform_publications AS p
+              ON p.event_id = h.id AND p.platform = 'threads'
+            WHERE h.threads_post_id IS NOT NULL
+              AND h.threads_post_id NOT IN ('', 'RESERVED', 'DRY_RUN_ID')
+              AND NOT EXISTS (
+                  SELECT 1 FROM publication_parts AS pp
+                  WHERE pp.platform = 'threads' AND pp.external_id = h.threads_post_id
+              )
+        """))
+
+
+async def init_db(database_engine: AsyncEngine = engine) -> None:
+    """Create current tables and apply required additive migrations."""
+    await migrate_db(database_engine)
+
+
+async def get_db_session() -> AsyncIterator[AsyncSession]:
+    """Yield a database session for dependency injection."""
     async with AsyncSessionLocal() as session:
         yield session

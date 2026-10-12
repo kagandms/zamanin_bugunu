@@ -52,7 +52,7 @@ jobs:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           PYTHONPATH: .
-        run: python3 src/analytics.py || true
+        run: python3 src/analytics.py
         
       - name: Commit and Push Database (bot_data.db)
         if: always()
