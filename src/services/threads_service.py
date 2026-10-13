@@ -43,6 +43,7 @@ TimestampCallback = Callable[[PublishedThreadPart], Awaitable[None]]
 class ThreadPublishCallbacks:
     on_part_published: Optional[PartCallback] = None
     on_part_timestamp_refined: Optional[TimestampCallback] = None
+    can_publish_main: Optional[Callable[[], Awaitable[bool]]] = None
 
 
 @dataclass(frozen=True)
@@ -178,13 +179,16 @@ class ThreadsService:
         return ContainerReadiness("timeout", "container_status_timeout")
 
     async def _publish_container_when_ready(
-        self, container_id: str, readiness: Optional[ContainerReadiness] = None
+        self, container_id: str, readiness: Optional[ContainerReadiness] = None,
+        authorize: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> tuple[ContainerReadiness, Optional[str], bool, Optional[str]]:
         """Publish a container only after readiness, preserving uncertain states."""
         current_readiness = readiness or await self._wait_for_container_status(container_id)
         if not current_readiness.is_ready:
             is_uncertain = current_readiness.status == "published"
             return current_readiness, None, is_uncertain, current_readiness.error_detail
+        if authorize is not None and not await authorize():
+            return ContainerReadiness("window_closed", "skip_window_closed"), None, False, "skip_window_closed"
         post_id, is_uncertain, error = await self._publish_container(container_id)
         return current_readiness, post_id, is_uncertain, error
 
@@ -204,6 +208,9 @@ class ThreadsService:
         parts: list[PublishedThreadPart] = []
         parent_id: Optional[str] = None
         for index, part_text in enumerate(threads):
+            authorize = callbacks.can_publish_main if callbacks and index == 0 else None
+            if authorize is not None and not await authorize():
+                return ThreadPostResult("failed", None, (), "skip_window_closed")
             use_image = index == 0 and bool(image_url)
             payload = self._build_container_payload(part_text, parent_id, image_url if use_image else None)
             container_id, error = await self._create_container(payload)
@@ -226,7 +233,7 @@ class ThreadsService:
                     return self._partial_result(parts, error or "image_container_failed")
                 readiness = None
             readiness, published_id, is_uncertain, error = await self._publish_container_when_ready(
-                container_id, readiness
+                container_id, readiness, authorize
             )
             if not readiness.is_ready:
                 failure_status = "unknown" if is_uncertain else "failed"
@@ -241,7 +248,8 @@ class ThreadsService:
                     self._build_container_payload(part_text, parent_id, None)
                 )
                 if text_container_id:
-                    _, published_id, is_uncertain, error = await self._publish_container_when_ready(text_container_id)
+                    _, published_id, is_uncertain, error = await self._publish_container_when_ready(
+                        text_container_id, authorize=authorize)
                 use_image = False
             if published_id is None:
                 failure_status = "unknown" if is_uncertain else "failed"
