@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
+import re
+import time
 from typing import Awaitable, Callable, Optional
 
 import httpx
@@ -42,6 +45,48 @@ class ThreadPublishCallbacks:
     on_part_timestamp_refined: Optional[TimestampCallback] = None
 
 
+@dataclass(frozen=True)
+class ContainerReadiness:
+    status: str
+    error_detail: Optional[str] = None
+
+    @property
+    def is_ready(self) -> bool:
+        return self.status == "ready"
+
+
+def _sanitize_diagnostic_text(text: str) -> str:
+    safe_text = re.sub(r"(?i)(access_token=)[^&\s]+", r"\1[REDACTED]", text)
+    safe_text = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", safe_text)
+    safe_text = re.sub(r"https?://\S+", "[URL REDACTED]", safe_text)
+    return safe_text[:300]
+
+
+def _safe_graph_error_details(response: httpx.Response) -> str:
+    """Return allowlisted Graph API error fields without request credentials or URLs."""
+    details: dict[str, object] = {"http_status": response.status_code}
+    try:
+        payload = response.json()
+    except (ValueError, AttributeError):
+        payload = {}
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        for field in ("type", "code", "error_subcode", "is_transient"):
+            value = error.get(field)
+            if isinstance(value, (str, int, bool)):
+                details[field] = value
+        message = error.get("message")
+        if isinstance(message, str):
+            details["message"] = _sanitize_diagnostic_text(message)
+        trace_id = error.get("fbtrace_id")
+        if isinstance(trace_id, str):
+            details["fbtrace_id"] = trace_id[:80]
+    trace_header = response.headers.get("x-fb-trace-id")
+    if trace_header:
+        details["request_trace_id"] = trace_header[:80]
+    return json.dumps(details, ensure_ascii=False, sort_keys=True)
+
+
 class ThreadsService:
     def __init__(self) -> None:
         if settings.THREADS_ACCESS_TOKEN is None or settings.THREADS_USER_ID is None:
@@ -78,25 +123,70 @@ class ThreadsService:
         return None
 
     async def _wait_for_container_status(
-        self, container_id: str, max_timeout: int = 45, poll_interval: int = 3
-    ) -> bool:
-        """Poll until an image container is ready, failed, or timed out."""
+        self,
+        container_id: str,
+        max_timeout: int = 45,
+        poll_interval: int = 3,
+        monotonic: Optional[Callable[[], float]] = None,
+    ) -> ContainerReadiness:
+        """Poll a container until ready, terminal, or timed out."""
+        if max_timeout <= 0 or poll_interval <= 0:
+            raise ValueError("Container polling limits must be positive.")
         url = f"{self.api_url}/{container_id}?fields=status,error_message&access_token={self.access_token}"
-        for _ in range(max_timeout // poll_interval):
-            await asyncio.sleep(poll_interval)
+        clock = monotonic or time.monotonic
+        deadline = clock() + max_timeout
+        has_polled = False
+        while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                break
+            if has_polled:
+                await asyncio.sleep(min(poll_interval, remaining))
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    break
             try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    response = await client.get(url)
-                    if response.status_code != 200:
+                async with httpx.AsyncClient(timeout=min(15.0, remaining)) as client:
+                    response = await asyncio.wait_for(client.get(url), timeout=remaining)
+                has_polled = True
+                if response.status_code != 200:
+                    diagnostic = _safe_graph_error_details(response)
+                    if response.status_code == 429 or response.status_code >= 500:
+                        logger.warning("Threads container status check will retry: {}", diagnostic)
                         continue
-                    status = response.json().get("status")
-                    if status == "FINISHED":
-                        return True
-                    if status == "ERROR":
-                        return False
+                    logger.error("Threads container status was rejected: {}", diagnostic)
+                    return ContainerReadiness("error", f"container_status_rejected:{diagnostic}")
+                payload = response.json()
+                status = payload.get("status") if isinstance(payload, dict) else None
+                if status == "FINISHED":
+                    return ContainerReadiness("ready")
+                if status == "ERROR":
+                    message = payload.get("error_message")
+                    detail = _sanitize_diagnostic_text(message) if isinstance(message, str) else "container_error"
+                    logger.error("Threads container reached ERROR: {}", detail)
+                    return ContainerReadiness("error", f"container_error:{detail}")
+                if status == "EXPIRED":
+                    return ContainerReadiness("expired", "container_expired")
+                if status == "PUBLISHED":
+                    return ContainerReadiness("published", "container_already_published_unknown_id")
+            except asyncio.TimeoutError:
+                logger.warning("Threads container status check reached its deadline.")
+                break
             except httpx.HTTPError as error:
-                logger.warning("Threads container status check failed (%s).", type(error).__name__)
-        return False
+                has_polled = True
+                logger.warning("Threads container status check failed ({}).", type(error).__name__)
+        return ContainerReadiness("timeout", "container_status_timeout")
+
+    async def _publish_container_when_ready(
+        self, container_id: str, readiness: Optional[ContainerReadiness] = None
+    ) -> tuple[ContainerReadiness, Optional[str], bool, Optional[str]]:
+        """Publish a container only after readiness, preserving uncertain states."""
+        current_readiness = readiness or await self._wait_for_container_status(container_id)
+        if not current_readiness.is_ready:
+            is_uncertain = current_readiness.status == "published"
+            return current_readiness, None, is_uncertain, current_readiness.error_detail
+        post_id, is_uncertain, error = await self._publish_container(container_id)
+        return current_readiness, post_id, is_uncertain, error
 
     async def post_thread(
         self,
@@ -126,21 +216,32 @@ class ThreadsService:
                     callbacks, index, parent_id, part_text, "TEXT" if not use_image else "IMAGE", "failed"
                 )
                 return self._partial_result(parts, error or "container_creation_failed")
-            if use_image and not await self._wait_for_container_status(container_id):
+            readiness = await self._wait_for_container_status(container_id)
+            if not readiness.is_ready and use_image and readiness.status != "published":
                 payload = self._build_container_payload(part_text, parent_id, None)
                 container_id, error = await self._create_container(payload)
                 use_image = False
                 if container_id is None:
                     await self._record_unpublished_part(callbacks, index, parent_id, part_text, "TEXT", "failed")
                     return self._partial_result(parts, error or "image_container_failed")
-
-            published_id, is_uncertain, error = await self._publish_container(container_id)
+                readiness = None
+            readiness, published_id, is_uncertain, error = await self._publish_container_when_ready(
+                container_id, readiness
+            )
+            if not readiness.is_ready:
+                failure_status = "unknown" if is_uncertain else "failed"
+                await self._record_unpublished_part(
+                    callbacks, index, parent_id, part_text, "IMAGE" if use_image else "TEXT", failure_status
+                )
+                if failure_status == "unknown" and not parts:
+                    return ThreadPostResult("unknown", None, (), readiness.error_detail)
+                return self._partial_result(parts, readiness.error_detail or "container_not_ready")
             if published_id is None and use_image and not is_uncertain:
                 text_container_id, error = await self._create_container(
                     self._build_container_payload(part_text, parent_id, None)
                 )
                 if text_container_id:
-                    published_id, is_uncertain, error = await self._publish_container(text_container_id)
+                    _, published_id, is_uncertain, error = await self._publish_container_when_ready(text_container_id)
                 use_image = False
             if published_id is None:
                 failure_status = "unknown" if is_uncertain else "failed"
@@ -194,9 +295,12 @@ class ThreadsService:
                     response = await client.post(url, data=payload)
                 if response.status_code == 200:
                     return response.json().get("id"), None
-                logger.error("Threads container creation returned HTTP %s.", response.status_code)
+                details = _safe_graph_error_details(response)
+                logger.error("Threads container creation failed: {}", details)
+                if response.status_code < 500:
+                    return None, f"container_create_rejected:{details}"
             except httpx.HTTPError as error:
-                logger.warning("Threads container creation failed (%s).", type(error).__name__)
+                logger.warning("Threads container creation failed ({}).", type(error).__name__)
             if attempt < settings.MAX_RETRIES:
                 await asyncio.sleep(settings.RETRY_DELAY * attempt)
         return None, "container_creation_failed"
@@ -215,18 +319,20 @@ class ThreadsService:
                     return post_id, False, None
                 return None, True, "publish_missing_id_unknown"
             if response.status_code >= 500:
-                logger.error("Threads publish returned HTTP %s; publication state is unknown.", response.status_code)
-                return None, True, f"publish_http_{response.status_code}_unknown"
-            logger.error("Threads publish returned HTTP %s.", response.status_code)
-            return None, False, f"publish_http_{response.status_code}"
+                details = _safe_graph_error_details(response)
+                logger.error("Threads publish state is unknown: {}", details)
+                return None, True, f"publish_unknown:{details}"
+            details = _safe_graph_error_details(response)
+            logger.error("Threads publish was rejected: {}", details)
+            return None, False, f"publish_rejected:{details}"
         except httpx.TimeoutException as error:
-            logger.error("Threads publish timed out; publication state is unknown (%s).", type(error).__name__)
+            logger.error("Threads publish timed out; publication state is unknown ({}).", type(error).__name__)
             return None, True, "publish_timeout_unknown"
         except httpx.HTTPError as error:
-            logger.error("Threads publish transport failed; publication state is unknown (%s).", type(error).__name__)
+            logger.error("Threads publish transport failed; publication state is unknown ({}).", type(error).__name__)
             return None, True, "publish_transport_unknown"
         except (ValueError, AttributeError) as error:
-            logger.error("Threads publish returned an unreadable response (%s).", type(error).__name__)
+            logger.error("Threads publish returned an unreadable response ({}).", type(error).__name__)
             return None, True, "publish_response_unknown"
 
     async def _get_published_at(self, post_id: str, confirmed_at: datetime) -> tuple[datetime, str]:

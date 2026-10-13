@@ -2,13 +2,19 @@ import httpx
 import re
 from src.core.config import settings
 from src.core.logger import logger
+from src.services.content_guard import (
+    CONTENT_GUARD_VERSION,
+    EventRewriteRequest,
+    get_source_fact_status,
+    resolve_fact_profile,
+    validate_event_content,
+)
 from src.utils.text_utils import (
     clean_twitter_text,
     sanitize_http_header_value,
     smart_split_text,
 )
 from typing import Tuple, List, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 
 # Critical leak phrases — if AI contains ANY of these, it's an immediate leak/garbage output
@@ -96,7 +102,12 @@ class AIService:
         self.api_key = settings.OPENROUTER_API_KEY.get_secret_value() if settings.OPENROUTER_API_KEY else ""
         self.last_generation_model: Optional[str] = None
         self.last_generation_type = "unknown"
-        self.prompt_version = "event-rewrite-v1"
+        self.last_validation_reason: Optional[str] = None
+        self.last_language_format_status = "unknown"
+        self.last_source_fact_status = "not_checked"
+        self.last_source_id: Optional[str] = None
+        self.last_source_url: Optional[str] = None
+        self.prompt_version = f"event-rewrite-v2+{CONTENT_GUARD_VERSION}"
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
         self.headers = {
@@ -265,44 +276,20 @@ class AIService:
 
         return "\n".join(cleaned_lines)
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1.5, min=5, max=15))
-    async def rewrite_event(self, original_text: str, formatted_date: str, year: Optional[str] = None) -> Tuple[List[str], List[str], Optional[str]]:
-        """
-        Rewrites the event text using AI to be viral and suitable for social media.
-        Returns: (tweet_parts, poll_options, image_prompt)
-        """
+    async def rewrite_event(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
+        """Generate and validate a complete post before any platform publishes it."""
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
-        year_context = f" ({year} yılında gerçekleşti)" if year else ""
-
-        system_prompt = (
-            "Sen profesyonel bir tarihçi ve sosyal medya uzmanısın. Görevin: "
-            "Verilen tarihi olayı Threads ve Telegram kanalları için VİRAL, İLGİ ÇEKİCİ ve DOĞRU bir içerik haline getirmektir."
-            "\n\nKURALLAR:"
-            "\n- Metnin GORSEL_PROMPT haricindeki tamamı KESİNLİKLE Türkçe (Turkish) olmalıdır. Diğer dilleri kesinlikle kullanma."
-            "\n- Metin 3 kısa ve akıcı bölümden oluşmalıdır. Bölümleri mutlaka '---' işareti ile ayır."
-            "\n- İLK PARAGRAF (HOOK): Düz bir tarih ansiklopedisi gibi 'tarihte şu oldu' diyerek başlama! Okuyucuyu akışta anında durduracak, merak uyandıran veya ezber bozan çarpıcı bir cümleyle başla ve uygun emojiler kullan."
-            "\n- HİKAYE ANLATIMI: Olayın perde arkasını, kritik kırılma anını ve insan hikayesini sürükleyici bir dille aktar."
-            "\n- SON PARAGRAF (TARTIŞMA TETİKLEYİCİ): Olayın sonucunu anlattıktan sonra, okuyucuları kesinlikle yorum yazmaya zorlayacak, ikiye bölecek veya kişisel fikrini soracak kışkırtıcı net bir soru cümlesi ekle. (Örn: 'Sizce o gün alınan bu karar tarihi bir zorunluluk muydu, yoksa vahim bir hata mıydı? Fikrinizi yorumlarda paylaşın 👇')."
-            "\n- ASLA ve ASLA HTML etiketleri (<b>, <i> vb.) KULLANMA. Sadece temiz düz metin üret."
-            "\n- ASLA düşünce (reasoning), scratchpad, karakter sayımı veya İngilizce açıklama yazma."
-            "\n- Cevabına doğrudan içerikle başla, öncesinde hiçbir açıklama yapma."
-            "\n\nISTENEN FORMAT:"
-            f"\n🕊️ Tarihte Bugün ({formatted_date})"
-            "\n[Çarpıcı ve merak uyandıran giriş cümlesi (Hook)]"
-            "\n#tarih #tarihteneoldu"
-            "\n---"
-            "\n[Olayın perde arkası ve gelişimi]"
-            "\n---"
-            "\n[Sonuç ve günümüze etkisi] 📚"
-            "\n[Okuyucuyu yorum yapmaya zorlayan kışkırtıcı tartışma sorusu 👇]"
-            "\nGORSEL_PROMPT: [English Image Prompt]"
-        )
+        profile = resolve_fact_profile(request)
+        self.last_source_fact_status = get_source_fact_status(profile)
+        self.last_language_format_status = "unknown"
+        system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
+        year_context = f" ({request.year} yılında gerçekleşti)" if request.year else ""
 
         payload = {
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Olay: {original_text}{year_context}\nRevize et."}
+                {"role": "user", "content": f"Kaynak olay: {request.original_text}{year_context}\nKaynak dışı sayfa özeti kullanma."}
             ],
             "stream": False,
             "temperature": 0.3,
@@ -326,8 +313,10 @@ class AIService:
             "Last Resort (Qwen 3.8)"
         ]
 
+        model_attempt_limit = min(2, len(models)) if profile else len(models)
+        self.last_validation_reason = None
         async with httpx.AsyncClient(timeout=35.0) as client:
-            for idx, (model, label) in enumerate(zip(models, model_names)):
+            for model, label in zip(models[:model_attempt_limit], model_names[:model_attempt_limit]):
                 try:
                     payload["model"] = model
                     response = await client.post(self.url, headers=self.headers, json=payload)
@@ -370,77 +359,93 @@ class AIService:
                         logger.warning(f"⚠️ {label} Model produced non-Turkish/invalid content! Trying next...")
                         continue
 
-                    logger.info(f"✅ Content passed all validation checks ({label} Model).")
+                    generated_parts, poll_options, image_prompt = self._parse_ai_response(
+                        content, request.original_text, request.formatted_date
+                    )
+                    reasons = validate_event_content(generated_parts, request, profile)
+                    if reasons:
+                        self.last_validation_reason = ",".join(reasons)
+                        logger.warning("Content rejected by source guard: {}", self.last_validation_reason)
+                        continue
+
+                    self.last_language_format_status = "passed"
+                    if profile:
+                        logger.info("Content passed language, format, and scoped source checks ({})", label)
+                    else:
+                        logger.info("Content passed language and format; source facts were not checked ({})", label)
                     self.last_generation_model = result.get("model") or model
-                    self.last_generation_type = "ai"
-                    return self._parse_ai_response(content, original_text, formatted_date)
+                    self.last_generation_type = "ai_validated" if profile else "ai_language_format_only"
+                    self.last_validation_reason = None
+                    self.last_source_id = profile.source_id if profile else None
+                    self.last_source_url = profile.source_url if profile else request.source_url
+                    return generated_parts, poll_options, image_prompt
 
                 except Exception as e:
                     logger.warning(f"⚠️ {label} Model ({model}) exception: {e}")
                     continue
 
-            logger.error("❌ All AI models in cascade failed.")
-            raise RuntimeError("All AI models in cascade failed.")
+            logger.error("❌ No AI candidate passed generation and source checks.")
+            raise RuntimeError(self.last_validation_reason or "all_models_failed")
 
-    def generate_template_fallback(
-        self, 
-        original_text: str, 
-        formatted_date: str, 
-        year: Optional[str] = None,
-        extract: Optional[str] = None
-    ) -> Tuple[List[str], List[str], Optional[str]]:
-        """
-        Deterministic, high-quality template fallback when external AI models are unreachable.
-        Guarantees that a post is NEVER skipped due to external AI downtime.
-        """
-        part1 = (
-            f"🕊️ Tarihte Bugün ({formatted_date})\n\n"
-            f"{original_text}\n\n"
-            f"#tarih #tarihteneoldu"
-        )
-        
-        if extract and len(extract.strip()) > 30:
-            clean_extract = extract.strip()
-            if len(clean_extract) > settings.MAX_THREAD_LENGTH - 30:
-                clean_extract = clean_extract[:settings.MAX_THREAD_LENGTH - 33] + "..."
-            part2 = clean_extract
-        else:
-            part2 = "Tarihin bu önemli dönüm noktası, dönemin toplumsal ve siyasal dengelerini derinden etkileyen gelişmelere sahne oldu."
-
-        part3 = (
-            "Geçmişin izleri günümüz dünyasını şekillendirmeye devam ediyor. 📚\n\n"
-            "Sizce o günün şartlarında alınan bu karar tarihi bir zorunluluk muydu, yoksa vahim bir hata mıydı? Fikrinizi yorumlarda paylaşın 👇"
+    @staticmethod
+    def _build_system_prompt(request: EventRewriteRequest, trusted_facts: tuple[str, ...]) -> str:
+        fact_context = "\n".join(f"- {fact}" for fact in trusted_facts)
+        return (
+            "Türkçe tarih içerikleri yaz. Yalnızca kullanıcı mesajındaki kaynak olay ve aşağıdaki doğrulanmış "
+            "olguları kullan; kaynakta olmayan kişi, yer, sayı, tarih, alıntı, neden veya taraf ekleme. "
+            "Bir cepheye ait sonucu savaşın tamamına genelleme. Çarpıcı ama karşı iddia uydurmayan bir anlatım kullan. "
+            "Kurum sayfası özeti olay kaynağı değildir. Tam metni üret; bölümleri --- ile ayır; HTML, açıklama veya "
+            "soru zorunlu değildir. GORSEL_PROMPT yalnız kaynakça desteklenen görsel ayrıntılarını içerebilir.\n"
+            f"Tarih başlığı: 🕊️ Tarihte Bugün ({request.formatted_date})\n"
+            f"Doğrulanmış olay olguları:\n{fact_context or '- Ek doğrulanmış olgu sağlanmadı.'}"
         )
 
-        tweets = [part1, part2, part3]
-        return tweets, [], None
+    def generate_source_fallback(self, request: EventRewriteRequest, reason: str) -> Tuple[List[str], List[str], Optional[str]]:
+        """Build a fallback only from source text or curated, cited event facts."""
+        profile = resolve_fact_profile(request)
+        if profile:
+            self.last_source_id = profile.source_id
+            self.last_source_url = profile.source_url
+            self.last_source_fact_status = get_source_fact_status(profile)
+            self.last_language_format_status = "fallback_template"
+            self.last_generation_type = f"source_fallback:{reason}"
+            parts = [
+                f"🕊️ Tarihte Bugün ({request.formatted_date}) Kars Antlaşması, 13 Ekim 1921'de Kars'ta imzalandı.",
+                "Türk Tarih Kurumu Kütüphanesi kaydı Türkiye, Ermenistan, Azerbaycan ve Gürcistan hükümetlerini taraf olarak listeliyor.",
+                "Türk Tarih Kurumu özeti, Batı Cephesi'ndeki mücadelenin Eylül 1922'ye kadar sürdüğünü kaydediyor.",
+            ]
+            validation_reasons = validate_event_content(parts, request, profile)
+            if validation_reasons:
+                raise RuntimeError(f"curated_fallback_rejected:{','.join(validation_reasons)}")
+            return parts, [], None
+        self.last_source_id = request.source_title
+        self.last_source_url = request.source_url
+        self.last_source_fact_status = get_source_fact_status(profile)
+        self.last_language_format_status = "fallback_template"
+        self.last_generation_type = f"source_fallback:{reason}"
+        source_event = request.original_text.strip()
+        if len(source_event) > settings.MAX_THREAD_LENGTH - 80:
+            source_event = source_event[: settings.MAX_THREAD_LENGTH - 83].rstrip() + "..."
+        return [f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{source_event}\n\n#tarih #tarihteneoldu"], [], None
 
-    async def rewrite_event_safe(
-        self, 
-        original_text: str, 
-        formatted_date: str, 
-        year: Optional[str] = None,
-        extract: Optional[str] = None
-    ) -> Tuple[List[str], List[str], Optional[str]]:
-        """
-        Wrapper ensuring AI rewrite with intelligent template fallback.
-        Guarantees that output is NEVER empty.
-        """
+    async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
+        """Return a fully validated generation or a factual source-only fallback."""
+        reason = "model_generation_failed"
         try:
-            result = await self.rewrite_event(original_text, formatted_date, year)
+            result = await self.rewrite_event(request)
             tweets, poll_options, image_prompt = result
-
-            total_text = "".join(tweets)
-            if len(total_text) >= 100:
+            validation_reasons = validate_event_content(tweets, request, resolve_fact_profile(request))
+            if len("".join(tweets)) >= 80 and not validation_reasons:
                 return result
-            logger.warning(f"AI output too short ({len(total_text)} chars). Activating smart template fallback.")
-        except Exception as e:
-            logger.warning(f"AI Service exception: {e}. Activating smart template fallback.")
-
-        logger.info("🛡️ Using deterministic smart template fallback.")
+            reason = self.last_validation_reason or ",".join(validation_reasons) or "output_too_short"
+            logger.warning("AI output rejected by final source guard: {}", reason)
+        except Exception as error:
+            reason = str(error)[:80] or "model_generation_failed"
+            logger.warning("AI rewrite failed ({}); using source-backed fallback.", reason)
         self.last_generation_model = None
-        self.last_generation_type = "template"
-        return self.generate_template_fallback(original_text, formatted_date, year, extract)
+        self.last_validation_reason = reason
+        self.last_source_fact_status = get_source_fact_status(resolve_fact_profile(request))
+        return self.generate_source_fallback(request, reason)
 
     def _parse_ai_response(self, content: str, original_text: str, formatted_date: Optional[str] = None):
         """Parses the structured response from AI and deterministically enforces the date header."""

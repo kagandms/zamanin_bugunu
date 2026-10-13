@@ -350,7 +350,9 @@ async def test_main_finalizes_telegram_failure_then_publishes_threads(database: 
     candidate = {"text":"mock event", "year":2000,"_topic_category":"TEST"}
     content = SimpleNamespace(fetch_events=AsyncMock(return_value=[candidate]),select_best_event=AsyncMock(return_value=candidate))
     ai = SimpleNamespace(rewrite_event_safe=AsyncMock(return_value=(["mock text "*20],[],None)),
-        prompt_version="fixture",last_generation_model="fixture",last_generation_type="fixture")
+        prompt_version="fixture",last_generation_model="fixture",last_generation_type="fixture",
+        last_source_id=None,last_source_url=None,last_validation_reason=None,
+        last_language_format_status="passed",last_source_fact_status="not_checked")
     image_file = tmp_path / "mock.jpg"
     image_file.write_bytes(b"mock")
     image = SimpleNamespace(download_image=AsyncMock(return_value=str(image_file)),cleanup=lambda _:None)
