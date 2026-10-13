@@ -13,6 +13,7 @@ from src.data.repository import HistoryRepository
 from src.data.models import EventReservation, PostMetadata, PublicationPartData
 from src.services.content_service import ContentService
 from src.services.ai_service import AIService
+from src.services.content_guard import EventRewriteRequest
 from src.services.image_service import ImageService
 from src.services.telegram_service import TelegramPart, TelegramService
 from src.services.threads_service import PublishedThreadPart, ThreadPublishCallbacks, ThreadsService
@@ -101,15 +102,24 @@ async def main() -> None:
                 local_used_texts.append(c_text)
                 continue
 
-            extract = None
-            if candidate.get("pages"):
-                extract = candidate["pages"][0].get("extract")
-
             c_year = candidate.get('year')
             date_str = f"{today.day}.{today.month}.{c_year}" if c_year else f"{today.day}.{today.month}"
+            source_page = (candidate.get("pages") or [{}])[0]
+            source_title = source_page.get("titles", {}).get("canonical") or source_page.get("title")
+            source_links = source_page.get("content_urls") or {}
+            source_desktop = source_links.get("desktop") or {}
+            rewrite_request = EventRewriteRequest(
+                original_text=c_text,
+                formatted_date=date_str,
+                year=str(c_year) if c_year is not None else None,
+                source_title=source_title,
+                source_url=source_desktop.get("page"),
+            )
             
             logger.info(f"Attempting rewrite for candidate #{attempt+1}: {c_text[:50]}... ({c_year})")
-            t, p, img_p = await ai_service.rewrite_event_safe(c_text, date_str, c_year, extract=extract)
+            t, p, img_p = await ai_service.rewrite_event_safe(rewrite_request)
+            if ai_service.last_generation_type.startswith("source_fallback:"):
+                logger.warning("Using source fallback; reason={}", ai_service.last_validation_reason)
             
             if t and len("".join(t)) >= 80:
                 selected_event = candidate
@@ -185,8 +195,8 @@ async def main() -> None:
         selected_page = (selected_event.get("pages") or [{}])[0]
         content_urls = selected_page.get("content_urls") or {}
         desktop_url = content_urls.get("desktop") or {}
-        source_url = desktop_url.get("page")
-        source_id = selected_page.get("pageid") or selected_page.get("title")
+        source_url = ai_service.last_source_url or desktop_url.get("page")
+        source_id = ai_service.last_source_id or selected_page.get("pageid") or selected_page.get("title")
         if selected_page.get("thumbnail"):
             image_source = "wikipedia_thumbnail"
         elif selected_page.get("originalimage"):
@@ -214,6 +224,8 @@ async def main() -> None:
                 prompt_version=ai_service.prompt_version,
                 ai_model=ai_service.last_generation_model,
                 generation_type=ai_service.last_generation_type,
+                language_format_validation_status=ai_service.last_language_format_status,
+                source_fact_validation_status=ai_service.last_source_fact_status,
                 selected_image_source=image_source if image_url else None,
                 selected_image_url=image_url,
                 selected_image_local_path=filename,

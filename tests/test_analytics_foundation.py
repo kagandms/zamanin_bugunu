@@ -9,7 +9,15 @@ from sqlalchemy import text, select, func
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.data.database import init_db
-from src.data.models import MetricSnapshot, PlatformPublication, PostHistory, PublicationPart, PublicationPartData
+from src.data.models import (
+    MetricSnapshot,
+    EventReservation,
+    PlatformPublication,
+    PostHistory,
+    PostMetadata,
+    PublicationPart,
+    PublicationPartData,
+)
 from src.data.repository import HistoryRepository
 from src.services.threads_service import ThreadPublishCallbacks, ThreadsService
 from src.services.telegram_service import TelegramService
@@ -54,11 +62,38 @@ async def test_legacy_migration_is_idempotent_and_does_not_invent_publish_time(t
         legacy_event_status = await connection.scalar(text(
             "SELECT publication_status FROM post_history WHERE content_text='legacy event'"
         ))
+        validation_status = (await connection.execute(text(
+            "SELECT language_format_validation_status, source_fact_validation_status "
+            "FROM post_history WHERE content_text='legacy event'"
+        ))).one()
     assert post_count == 2
     assert publication_count == 1
     assert part_count == 1
     assert legacy_part == ("unknown", None)
     assert legacy_event_status == "unknown"
+    assert validation_status == (None, None)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_additive_validation_metadata_is_saved_without_backfilling_legacy_rows():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    await init_db(engine)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        repository = HistoryRepository(session)
+        entry_id = await repository.reserve_event(EventReservation(
+            text="new event",
+            metadata=PostMetadata(
+                language_format_validation_status="passed",
+                source_fact_validation_status="not_checked",
+            ),
+        ))
+        entry = await session.get(PostHistory, entry_id)
+
+    assert entry is not None
+    assert entry.language_format_validation_status == "passed"
+    assert entry.source_fact_validation_status == "not_checked"
     await engine.dispose()
 
 
@@ -116,14 +151,14 @@ async def test_telegram_success_threads_failure_is_partial_and_counts_once():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("successful_count", [1, 2])
+@pytest.mark.parametrize("successful_count", [1, 2, 3])
 async def test_threads_chain_keeps_published_parts_when_later_part_fails(monkeypatch, successful_count):
     from src.core.config import Settings
 
     config = Settings(THREADS_ACCESS_TOKEN="token", THREADS_USER_ID="123", DRY_RUN=False)
     monkeypatch.setattr("src.services.threads_service.settings", config)
     service = ThreadsService()
-    published_ids = iter(["main-id", "reply-id", None][:successful_count] + [None])
+    published_ids = iter(["main-id", "reply-id", "third-id"][:successful_count] + [None])
     async def create_container(payload):
         return "container", None
     async def publish_container(container_id):
@@ -145,14 +180,18 @@ async def test_threads_chain_keeps_published_parts_when_later_part_fails(monkeyp
 
     callbacks = ThreadPublishCallbacks(persist, refine)
     result = await service.post_thread(["main", "second", "third"], callbacks=callbacks)
-    assert result.status == "partial"
+    assert result.status == ("published" if successful_count == 3 else "partial")
     assert result.main_post_id == "main-id"
     published_records = [part for part in records if part.status == "published"]
     assert len(published_records) == successful_count
-    assert [part.external_id for part in published_records] == ["main-id", "reply-id"][:successful_count]
+    assert [part.external_id for part in published_records] == ["main-id", "reply-id", "third-id"][:successful_count]
     assert [part.part_index for part in published_records] == list(range(successful_count))
-    assert records[-1].status == "failed"
-    assert records[-1].part_index == successful_count
+    if successful_count < 3:
+        assert records[-1].status == "failed"
+        assert records[-1].part_index == successful_count
+    else:
+        assert all(part.status == "published" for part in records)
+        assert [part.external_id for part in records] == ["main-id", "reply-id", "third-id"]
     assert len(refinements) == successful_count
 
 
@@ -177,6 +216,7 @@ async def test_threads_publish_timeout_is_unknown_and_is_not_retried(monkeypatch
         return None, True, "publish_timeout_unknown"
 
     monkeypatch.setattr(service, "_create_container", create_container)
+    monkeypatch.setattr(service, "_wait_for_container_status", lambda _: _ready())
     monkeypatch.setattr(service, "_publish_container", publish_container)
     recorded = []
 
@@ -202,7 +242,8 @@ async def test_threads_dry_run_is_not_reported_as_publication_failure(monkeypatc
 
 
 async def _ready():
-    return True
+    from src.services.threads_service import ContainerReadiness
+    return ContainerReadiness("ready")
 
 
 async def _published_time(confirmed_at):

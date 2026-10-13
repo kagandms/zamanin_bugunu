@@ -22,6 +22,8 @@ class PostMetadata:
     prompt_version: Optional[str] = None
     ai_model: Optional[str] = None
     generation_type: Optional[str] = None
+    language_format_validation_status: Optional[str] = None
+    source_fact_validation_status: Optional[str] = None
     selected_image_source: Optional[str] = None
     selected_image_url: Optional[str] = None
     selected_image_local_path: Optional[str] = None
@@ -76,6 +78,8 @@ class PostHistory(Base):
     prompt_version: Mapped[Optional[str]] = mapped_column(nullable=True)
     ai_model: Mapped[Optional[str]] = mapped_column(nullable=True)
     generation_type: Mapped[Optional[str]] = mapped_column(nullable=True)
+    language_format_validation_status: Mapped[Optional[str]] = mapped_column(nullable=True)
+    source_fact_validation_status: Mapped[Optional[str]] = mapped_column(nullable=True)
     selected_image_source: Mapped[Optional[str]] = mapped_column(nullable=True)
     selected_image_url: Mapped[Optional[str]] = mapped_column(nullable=True)
     selected_image_local_path: Mapped[Optional[str]] = mapped_column(nullable=True)

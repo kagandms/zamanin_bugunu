@@ -27,6 +27,8 @@ POST_HISTORY_COLUMNS = {
     "prompt_version": "TEXT",
     "ai_model": "TEXT",
     "generation_type": "TEXT",
+    "language_format_validation_status": "TEXT",
+    "source_fact_validation_status": "TEXT",
     "selected_image_source": "TEXT",
     "selected_image_url": "TEXT",
     "selected_image_local_path": "TEXT",
