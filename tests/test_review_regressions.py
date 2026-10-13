@@ -361,6 +361,9 @@ async def test_main_finalizes_telegram_failure_then_publishes_threads(database: 
         monkeypatch.setattr(main_module,name,lambda instance=instance:instance)
     monkeypatch.setattr(main_module,"init_db",AsyncMock())
     monkeypatch.setattr(main_module,"AsyncSessionLocal",database.factory)
+    monkeypatch.setattr(main_module,"publication_clock",lambda:OBSERVED_AT.replace(hour=6,minute=17))
+    checkpoint = SimpleNamespace(save=AsyncMock(return_value="fixture-remote-checkpoint"))
+    monkeypatch.setattr(main_module,"GitDatabaseCheckpoint",lambda _:checkpoint)
 
     await main_module.main()
 

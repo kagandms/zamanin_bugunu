@@ -61,10 +61,14 @@ async def sync_analytics(options: Optional[AnalyticsOptions] = None) -> Analytic
         await init_db()
     clock = selected.clock or (lambda: selected.now or datetime.now(timezone.utc))
     factory = selected.session_factory or AsyncSessionLocal
+    from src.data.publication_slots import SlotStore
+    slots = SlotStore(factory)
+    await slots.maintain(_as_utc(clock()))
     context = CollectionContext(_as_utc(clock()), clock, selected.threads_service)
     async with factory() as session:
         summary = await collect_due_snapshots(session, context)
         report = await _build_report(session, _as_utc(clock()))
+    report += "\n" + await slots.report(_as_utc(clock()))
     return AnalyticsResult(report + "\nSync summary: " + json.dumps(asdict(summary), sort_keys=True), summary)
 
 

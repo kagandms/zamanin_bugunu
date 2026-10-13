@@ -1,63 +1,51 @@
-name: Zamanın Bugünü Botu (Schedule)
+name: Zamanın Bugünü publication slots
 
 on:
   schedule:
-    # Günde 4 kez çalışır: UTC 06:07, 11:07, 17:07, 19:07 (TR saatiyle 09:07, 14:07, 20:07, 22:07 - Prime-Time Gece Zirvesi)
-    - cron: '7 6,11,17,19 * * *'
+    # First nominal check is ten minutes after the 09:07 / 20:07 Istanbul target.
+    - cron: '17 6,7,17,18 * * *'
   workflow_dispatch:
 
-# Aynı anda sadece bir workflow çalışabilir — duplicate post'u önler
+# Every workflow writing bot_data.db shares this lock before its checkout.
 concurrency:
-  group: zamanin-bugunu-bot
+  group: zamanin-bugunu-db
+  queue: max
   cancel-in-progress: false
 
 jobs:
-  run-bot:
+  run:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Veritabanını geri kaydetmek için gerekli izni verir
-      
+      contents: write
+    env:
+      ZAMANIN_DB_PERSISTENCE: git
+      PYTHONPATH: .
     steps:
-      - name: Checkout Repository
+      - name: Checkout current main after acquiring DB lock
         uses: actions/checkout@v4
-        
-      - name: Pull latest changes (DB sync)
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Refresh database from current main
         run: |
-          git pull --rebase origin main || git pull --rebase origin master || true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          git fetch origin main
+          git switch --detach origin/main
+          echo "ZAMANIN_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
-          
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          
-      - name: Run Bot
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Publish only an eligible persisted slot
         env:
+          ZAMANIN_SCHEDULE: ${{ github.event.schedule || 'unknown' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          PYTHONPATH: .
-        run: python3 src/main.py
-
-      - name: Sync Analytics Metrics
+        run: python -m src.main
+      - name: Save Database results without binary conflict resolution
         if: always()
-        env:
-          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
-          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
-          PYTHONPATH: .
-        run: python3 src/analytics.py
-        
-      - name: Commit and Push Database (bot_data.db)
-        if: always()
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add bot_data.db
-          if ! git diff --staged --quiet; then git commit -m "chore: otomatik veritabanı ve metrik güncellemesi" && git push; fi
+        run: python -m src.database_checkpoint --phase result

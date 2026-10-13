@@ -42,6 +42,7 @@ class TelegramService:
         self.channel_id = settings.TELEGRAM_CHANNEL_ID
         self.api_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.last_request_uncertain = False
+        self.publication_guard: Optional[Callable[[], Awaitable[bool]]] = None
 
     async def verify_credentials(self) -> bool:
         """Verify the configured token with Telegram getMe."""
@@ -132,6 +133,9 @@ class TelegramService:
         url = f"{self.api_url}/{method}"
         self.last_request_uncertain = False
         for attempt in range(1, settings.MAX_RETRIES + 1):
+            if self.publication_guard is not None and not await self.publication_guard():
+                logger.warning("Telegram public request skipped: slot window closed")
+                return None
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     if file_path:

@@ -13,6 +13,41 @@ class Base(DeclarativeBase):
     pass
 
 
+class PublicationSlot(Base):
+    """Scheduling ledger; publication rows remain the source of external outcomes."""
+    __tablename__ = "publication_slots"
+    __table_args__ = (UniqueConstraint("local_day", "slot_key", name="uq_slot_local_day_key"),
+                     Index("ix_slot_status_closes", "status", "closes_at"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    local_day: Mapped[str] = mapped_column(String(10), nullable=False)
+    slot_key: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("post_history.id"), nullable=True)
+    reserved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reservation_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    result_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
+
+class SlotAttempt(Base):
+    """Observed run identity and decision, including failed or repeated checks."""
+    __tablename__ = "slot_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slot_id: Mapped[Optional[int]] = mapped_column(ForeignKey("publication_slots.id"), nullable=True)
+    run_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    schedule: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    persistence_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    checkpoint_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
+
 @dataclass(frozen=True)
 class PostMetadata:
     event_year: Optional[str] = None
