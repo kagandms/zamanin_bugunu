@@ -265,6 +265,13 @@ async def _execute_cli(is_report_only: bool) -> int:
             report = await _build_report(session, datetime.now(timezone.utc))
         print(report)
         return 0
+    from src.dispatch_metadata import format_dispatch, read_dispatch, validate_analytics_dispatch
+    from src.core.logger import logger
+    metadata = read_dispatch(os.environ)
+    validate_analytics_dispatch(metadata, datetime.now(timezone.utc))
+    logger.info("Analytics dispatch metadata {} run={} workflow_source={} checkout={}",
+        format_dispatch(metadata), os.getenv("GITHUB_RUN_ID", "local"),
+        os.getenv("GITHUB_SHA", "unknown"), os.getenv("ZAMANIN_SOURCE_SHA", "unknown"))
     result = await sync_analytics()
     print(result.report)
     return result.summary.exit_code

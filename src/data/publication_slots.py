@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timezone
 
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.data.models import PlatformPublication, PostHistory, PublicationPart, PublicationSlot, SlotAttempt
+from src.dispatch_metadata import DispatchMetadata, reject_publication_dispatch
 from src.data.repository import as_utc
 from src.publication_policy import ISTANBUL, MAX_DAILY_EVENTS, build_windows, find_open_window, require_utc
 
@@ -20,6 +21,7 @@ class RunIdentity:
     event: str
     schedule: str
     source_sha: str
+    dispatch: DispatchMetadata = field(default_factory=DispatchMetadata)
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,7 @@ class SlotDecision:
 
 @dataclass(frozen=True)
 class SlotClaim:
-    slot: PublicationSlot
+    slot: PublicationSlot | None
     observed_at: datetime
     identity: RunIdentity
 
@@ -61,14 +63,9 @@ class SlotStore:
         current = require_utc(timestamp)
         await self.maintain(current)
         window = find_open_window(current)
-        if window is None:
-            async with self.factory() as session:
-                attempt = SlotAttempt(slot_id=None, run_id=identity.run_id, event=identity.event,
-                    schedule=identity.schedule, source_sha=identity.source_sha, observed_at=current,
-                    decision="skip_window_closed", persistence_status="local_only")
-                session.add(attempt)
-                await session.commit()
-            return SlotDecision("skip_window_closed", attempt_id=attempt.id)
+        rejection = reject_publication_dispatch(identity.dispatch, current)
+        if rejection or window is None:
+            return await self._record_skip(SlotClaim(None, current, identity), rejection or "skip_window_closed")
         async with self.factory() as session:
             await session.execute(text("BEGIN IMMEDIATE"))
             slot = await session.scalar(select(PublicationSlot).where(
@@ -78,19 +75,35 @@ class SlotStore:
             return decision
 
     async def _claim_locked(self, session: AsyncSession, request: SlotClaim) -> SlotDecision:
-        slot, current, identity = request.slot, request.observed_at, request.identity
+        slot, current = request.slot, request.observed_at
+        if slot is None:
+            raise ValueError("An open slot is required")
         status = "skip_slot_consumed"
         if slot.status == "pending":
             if await self._budget_used(session, current) >= MAX_DAILY_EVENTS:
                 slot.status, slot.reason, status = "skip_daily_limit", "daily_budget_exhausted", "skip_daily_limit"
             else:
                 slot.status, slot.reserved_at, status = "preparing", current, "claimed"
-        attempt = SlotAttempt(slot_id=slot.id, run_id=identity.run_id, event=identity.event,
-                              schedule=identity.schedule, source_sha=identity.source_sha,
-                              observed_at=current, decision=status, persistence_status="local_only")
+        attempt = self._build_attempt(request, status)
         session.add(attempt)
         await session.flush()
         return SlotDecision(status, slot.id, attempt.id)
+
+    async def _record_skip(self, request: SlotClaim, reason: str) -> SlotDecision:
+        async with self.factory() as session:
+            attempt = self._build_attempt(request, reason)
+            session.add(attempt)
+            await session.commit()
+            return SlotDecision(reason, attempt_id=attempt.id)
+
+    def _build_attempt(self, request: SlotClaim, decision: str) -> SlotAttempt:
+        identity, metadata = request.identity, request.identity.dispatch
+        return SlotAttempt(slot_id=request.slot.id if request.slot else None,
+            run_id=identity.run_id, event=identity.event, schedule=identity.schedule,
+            source_sha=identity.source_sha, observed_at=request.observed_at,
+            decision=decision, persistence_status="local_only", trigger_source=metadata.trigger_source,
+            correlation_id=metadata.correlation_id or None, intended_at=metadata.intended_at,
+            intended_day=metadata.intended_day or None, intended_slot=metadata.intended_slot or None)
 
     async def _budget_used(self, session: AsyncSession, current: datetime) -> int:
         local_day = current.astimezone(ISTANBUL).date()

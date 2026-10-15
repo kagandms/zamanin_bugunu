@@ -1,0 +1,163 @@
+{
+  "checked_for": "task04_local_baseline",
+  "repository": "kagandms/zamanin_bugunu",
+  "base_sha": "cca092ef2e57cc5140b766384134491495cb4979",
+  "endpoint_0": {
+    "status": "connector_response_shape_unavailable"
+  },
+  "runs": [
+    {
+      "id": 38700495542,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "cca092ef2e57cc5140b766384134491495cb4979",
+      "created_at": "2026-10-15T07:41:53Z"
+    },
+    {
+      "id": 38667308047,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "cca092ef2e57cc5140b766384134491495cb4979",
+      "created_at": "2026-10-15T01:44:50Z"
+    },
+    {
+      "id": 38653764644,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "4b2804ea8e82672c4a3838aa18358a8a2b9b9aec",
+      "created_at": "2026-10-14T23:23:24Z"
+    },
+    {
+      "id": 38634564059,
+      "event": "schedule",
+      "name": "Zamanın Bugünü publication slots",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "fc62b7f29bd8d14020622d9a106ed98e65f3e0a8",
+      "created_at": "2026-10-14T20:44:08Z"
+    },
+    {
+      "id": 38625404355,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "52e085a95b31634dcef0eaf508491dfa8b7ac351",
+      "created_at": "2026-10-14T19:38:41Z"
+    },
+    {
+      "id": 38589095060,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "b21e6f6e81f9370a9881a9299497e76596f5b548",
+      "created_at": "2026-10-14T15:24:56Z"
+    },
+    {
+      "id": 38560442531,
+      "event": "schedule",
+      "name": "Zamanın Bugünü publication slots",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "8930cf5c1ce80fafca4999cdcc194370311ec80d",
+      "created_at": "2026-10-14T11:59:04Z"
+    },
+    {
+      "id": 38550298904,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "574391a9905c084d6dea9baa0b30c9488d655d51",
+      "created_at": "2026-10-14T10:32:33Z"
+    },
+    {
+      "id": 38515859617,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "574391a9905c084d6dea9baa0b30c9488d655d51",
+      "created_at": "2026-10-14T05:17:44Z"
+    },
+    {
+      "id": 38486603155,
+      "event": "schedule",
+      "name": "Zamanın Bugünü analytics only",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "d1c44ceb1769383224fdd862801461e8c85d4e50",
+      "created_at": "2026-10-13T23:49:56Z"
+    },
+    {
+      "id": 38409512491,
+      "event": "schedule",
+      "name": "Zamanın Bugünü Botu (Schedule)",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "d4ae79b2870e606e787c43704314456ca27b0548",
+      "created_at": "2026-10-13T13:59:22Z"
+    },
+    {
+      "id": 38322765712,
+      "event": "schedule",
+      "name": "Zamanın Bugünü Botu (Schedule)",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "d5f6485449fd9319c3e336d9521456a3a55ccb43",
+      "created_at": "2026-10-12T23:33:34Z"
+    },
+    {
+      "id": 38267734745,
+      "event": "schedule",
+      "name": "Zamanın Bugünü Botu (Schedule)",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "f158b7ef686949f0b0b420ae3d3839a72510f323",
+      "created_at": "2026-10-12T15:05:57Z"
+    },
+    {
+      "id": 38173979192,
+      "event": "schedule",
+      "name": "Zamanın Bugünü Botu (Schedule)",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "b02903dc452bf2c2b6c836bbc3c622401bb42d85",
+      "created_at": "2026-10-11T20:51:49Z"
+    },
+    {
+      "id": 38139696454,
+      "event": "schedule",
+      "name": "Zamanın Bugünü Botu (Schedule)",
+      "status": "completed",
+      "conclusion": "success",
+      "source_sha": "24ffcd0630c32e741f9c5774c9c59f1487cdc7b3",
+      "created_at": "2026-10-11T12:33:11Z"
+    }
+  ],
+  "workflows": [
+    {
+      "id": 383605168,
+      "path": ".github/workflows/analytics.yml",
+      "state": "active"
+    },
+    {
+      "id": 315721726,
+      "path": ".github/workflows/schedule.yml",
+      "state": "active"
+    },
+    {
+      "id": 315717711,
+      "path": "dynamic/dependabot/update-graph",
+      "state": "active"
+    }
+  ],
+  "checked_date_tsi": "2026-10-15"
+}

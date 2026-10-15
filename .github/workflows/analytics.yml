@@ -4,6 +4,34 @@ on:
   schedule:
     - cron: '37 * * * *'
   workflow_dispatch:
+    inputs:
+      trigger_source:
+        description: 'Optional external trigger identity; not authorization'
+        required: false
+        default: ''
+        type: string
+      correlation_id:
+        description: 'Deterministic external occurrence ID'
+        required: false
+        default: ''
+        type: string
+      intended_at:
+        description: 'Intended UTC occurrence (RFC3339 Z)'
+        required: false
+        default: ''
+        type: string
+      intended_day:
+        description: 'Publication Istanbul day, YYYY-MM-DD'
+        required: false
+        default: ''
+        type: string
+      intended_slot:
+        description: 'Publication morning/evening; empty for analytics'
+        required: false
+        default: ''
+        type: string
+
+run-name: '${{ github.workflow }} | ${{ inputs.correlation_id || github.event_name }}'
 
 # Every workflow writing bot_data.db shares this lock before its checkout.
 concurrency:
@@ -19,6 +47,11 @@ jobs:
     env:
       ZAMANIN_DB_PERSISTENCE: git
       PYTHONPATH: .
+      ZAMANIN_TRIGGER_SOURCE: ${{ inputs.trigger_source || '' }}
+      ZAMANIN_CORRELATION_ID: ${{ inputs.correlation_id || '' }}
+      ZAMANIN_INTENDED_AT: ${{ inputs.intended_at || '' }}
+      ZAMANIN_INTENDED_DAY: ${{ inputs.intended_day || '' }}
+      ZAMANIN_INTENDED_SLOT: ${{ inputs.intended_slot || '' }}
     steps:
       - name: Checkout current main after acquiring DB lock
         uses: actions/checkout@v4
