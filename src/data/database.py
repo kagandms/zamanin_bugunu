@@ -43,6 +43,12 @@ async def migrate_db(database_engine: AsyncEngine = engine) -> None:
     """Apply idempotent additive SQLite migrations and preserve legacy records."""
     async with database_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        attempt_columns = await connection.execute(text("PRAGMA table_info(slot_attempts)"))
+        existing_attempt_columns = {row[1] for row in attempt_columns.fetchall()}
+        for column_name in ("trigger_source", "correlation_id", "intended_at", "intended_day", "intended_slot"):
+            if column_name not in existing_attempt_columns:
+                column_type = "DATETIME" if column_name == "intended_at" else "TEXT"
+                await connection.execute(text(f"ALTER TABLE slot_attempts ADD COLUMN {column_name} {column_type}"))
         table_result = await connection.execute(text("PRAGMA table_info(post_history)"))
         existing_columns = {row[1] for row in table_result.fetchall()}
         for column_name, column_type in POST_HISTORY_COLUMNS.items():

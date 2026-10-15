@@ -1,0 +1,50 @@
+
+> zamanin-bugunu-workflow-trigger@1.0.0 test
+> npm run build && node --test tests/*.test.mjs
+
+
+> zamanin-bugunu-workflow-trigger@1.0.0 build
+> tsc
+
+✔ half-open slot at 06:06:59 (0.748208ms)
+✔ half-open slot at 06:07:00 (0.671458ms)
+✔ half-open slot at 08:06:59 (0.056291ms)
+✔ half-open slot at 08:07:00 (0.041333ms)
+✔ half-open slot at 17:06:59 (0.046792ms)
+✔ half-open slot at 17:07:00 (0.040417ms)
+✔ half-open slot at 19:06:59 (0.051292ms)
+✔ half-open slot at 19:07:00 (0.038334ms)
+✔ UTC/Istanbul midnight never opens a publication window (0.068666ms)
+✔ one day has twelve nominal publication dispatches and twenty-four analytics dispatches (1.645584ms)
+✔ stale cron, future/invalid clock, unknown cron and old day all no-op (0.316375ms)
+✔ disabled/missing secret {} (0.157875ms)
+✔ disabled/missing secret {"DISPATCH_ENABLED":"false","GITHUB_DISPATCH_TOKEN":"fake"} (0.0365ms)
+✔ disabled/missing secret {"DISPATCH_ENABLED":"true"} (0.028875ms)
+✔ disabled/missing secret {"DISPATCH_ENABLED":"true","GITHUB_DISPATCH_TOKEN":"  "} (0.039375ms)
+✔ fixed workflow repo and main ref, deterministic metadata on duplicate delivery (18.401958ms)
+✔ analytics dispatch has no slot and only targets analytics workflow (0.145916ms)
+✔ documented 200 run details and legacy 204 are accepted independently of execution (1.47425ms)
+✔ HTTP 401 has no unbounded/ambiguous replay or raw-body logs (0.214083ms)
+✔ HTTP 403 has no unbounded/ambiguous replay or raw-body logs (0.111875ms)
+✔ HTTP 404 has no unbounded/ambiguous replay or raw-body logs (0.066292ms)
+✔ HTTP 422 has no unbounded/ambiguous replay or raw-body logs (0.085959ms)
+✔ HTTP 429 has no unbounded/ambiguous replay or raw-body logs (0.158333ms)
+✔ HTTP 500 has no unbounded/ambiguous replay or raw-body logs (0.082708ms)
+✔ HTTP 502 has no unbounded/ambiguous replay or raw-body logs (0.076458ms)
+✔ HTTP 503 has no unbounded/ambiguous replay or raw-body logs (0.078917ms)
+✔ 429 permits exactly one retry after short Retry-After and never loops (0.331791ms)
+✔ long Retry-After and HTTP-date defer to next nominal check (0.127166ms)
+✔ retry revalidates actual clock after delay crosses a closing boundary (0.100833ms)
+✔ network/timeout errors are unknown, sanitized and not retried (0.11425ms)
+✔ HTTP methods cannot dispatch even with arbitrary URL/body selectors (0.617875ms)
+✔ accepted response with unavailable details remains accepted and is never replayed (0.119541ms)
+✔ observed time and scheduledTime remain separate even on an outside-window noop (0.043125ms)
+✔ 5xx preserves unknown acceptance state rather than asserting definitive rejection (0.062917ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.157625

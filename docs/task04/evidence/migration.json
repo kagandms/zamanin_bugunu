@@ -1,0 +1,322 @@
+{
+  "source_sha256": "6eafe8013899f84b5261f5d77455ed57ec4b6144b6ba7bfe90ab732eabfd0b16",
+  "source_unchanged": true,
+  "passes": [
+    {
+      "pass": 1,
+      "all_original_values_preserved": true,
+      "tables": {
+        "post_history": {
+          "columns": [
+            "id",
+            "content_text",
+            "posted_at",
+            "source_category",
+            "tweet_id",
+            "threads_post_id",
+            "topic_category",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "last_synced_at",
+            "event_year",
+            "source_url",
+            "source_id",
+            "published_text",
+            "prompt_version",
+            "ai_model",
+            "generation_type",
+            "selected_image_source",
+            "selected_image_url",
+            "selected_image_local_path",
+            "selected_image_bytes",
+            "experiment_id",
+            "variant",
+            "publication_status",
+            "language_format_validation_status",
+            "source_fact_validation_status"
+          ],
+          "rows": 230,
+          "values_sha256": "5fbec03a8d7f0d6f7bf9cedb82cc0bc7ad55f8bf7ea3a6d74d1c5006cf0e721e"
+        },
+        "platform_publications": {
+          "columns": [
+            "id",
+            "event_id",
+            "platform",
+            "status",
+            "reserved_at",
+            "completed_at",
+            "error_detail"
+          ],
+          "rows": 30,
+          "values_sha256": "84e198188436d20c1f24a4d20228613941fe4971e929cc808b36a4d720f5548f"
+        },
+        "publication_parts": {
+          "columns": [
+            "id",
+            "publication_id",
+            "platform",
+            "external_id",
+            "part_index",
+            "parent_external_id",
+            "text",
+            "media_type",
+            "is_main",
+            "status",
+            "published_at",
+            "published_at_source"
+          ],
+          "rows": 32,
+          "values_sha256": "0c23d768b734fce8eabef16ab91ba40a2a8807ad204134bfcf709b3ffeaff800"
+        },
+        "metric_snapshots": {
+          "columns": [
+            "id",
+            "part_id",
+            "window",
+            "status",
+            "observed_at",
+            "selected_at",
+            "request_started_at",
+            "reply_observed_at",
+            "reply_error_code",
+            "target_age_seconds",
+            "actual_age_seconds",
+            "api_scope",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "quotes",
+            "verified_external_replies",
+            "own_reply_count",
+            "organic_reply_status",
+            "error_code"
+          ],
+          "rows": 3,
+          "values_sha256": "25660c3952e5146125e08bda84a8e350df8b0feeedb29a085d6784c0db08d2ba"
+        },
+        "metric_attempts": {
+          "columns": [
+            "id",
+            "part_id",
+            "window",
+            "status",
+            "observed_at",
+            "selected_at",
+            "request_started_at",
+            "reply_observed_at",
+            "reply_error_code",
+            "target_age_seconds",
+            "actual_age_seconds",
+            "api_scope",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "quotes",
+            "verified_external_replies",
+            "own_reply_count",
+            "organic_reply_status",
+            "error_code"
+          ],
+          "rows": 3,
+          "values_sha256": "25660c3952e5146125e08bda84a8e350df8b0feeedb29a085d6784c0db08d2ba"
+        },
+        "publication_slots": {
+          "columns": [
+            "id",
+            "local_day",
+            "slot_key",
+            "target_at",
+            "closes_at",
+            "status",
+            "event_id",
+            "reserved_at",
+            "reason",
+            "reservation_commit_sha",
+            "result_commit_sha"
+          ],
+          "rows": 4,
+          "values_sha256": "e3c2785c44b2e6ea356fcc10d1739faf9610e084a2fb61df000dfb881b4d6952"
+        },
+        "slot_attempts": {
+          "columns": [
+            "id",
+            "slot_id",
+            "run_id",
+            "event",
+            "schedule",
+            "source_sha",
+            "observed_at",
+            "decision",
+            "persistence_status",
+            "checkpoint_commit_sha"
+          ],
+          "rows": 2,
+          "values_sha256": "f18b56fa03f8dfd94cf3682b89ce2ae05809b979338d56e3eea41bce6ea9e024"
+        }
+      }
+    },
+    {
+      "pass": 2,
+      "all_original_values_preserved": true,
+      "tables": {
+        "post_history": {
+          "columns": [
+            "id",
+            "content_text",
+            "posted_at",
+            "source_category",
+            "tweet_id",
+            "threads_post_id",
+            "topic_category",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "last_synced_at",
+            "event_year",
+            "source_url",
+            "source_id",
+            "published_text",
+            "prompt_version",
+            "ai_model",
+            "generation_type",
+            "selected_image_source",
+            "selected_image_url",
+            "selected_image_local_path",
+            "selected_image_bytes",
+            "experiment_id",
+            "variant",
+            "publication_status",
+            "language_format_validation_status",
+            "source_fact_validation_status"
+          ],
+          "rows": 230,
+          "values_sha256": "5fbec03a8d7f0d6f7bf9cedb82cc0bc7ad55f8bf7ea3a6d74d1c5006cf0e721e"
+        },
+        "platform_publications": {
+          "columns": [
+            "id",
+            "event_id",
+            "platform",
+            "status",
+            "reserved_at",
+            "completed_at",
+            "error_detail"
+          ],
+          "rows": 30,
+          "values_sha256": "84e198188436d20c1f24a4d20228613941fe4971e929cc808b36a4d720f5548f"
+        },
+        "publication_parts": {
+          "columns": [
+            "id",
+            "publication_id",
+            "platform",
+            "external_id",
+            "part_index",
+            "parent_external_id",
+            "text",
+            "media_type",
+            "is_main",
+            "status",
+            "published_at",
+            "published_at_source"
+          ],
+          "rows": 32,
+          "values_sha256": "0c23d768b734fce8eabef16ab91ba40a2a8807ad204134bfcf709b3ffeaff800"
+        },
+        "metric_snapshots": {
+          "columns": [
+            "id",
+            "part_id",
+            "window",
+            "status",
+            "observed_at",
+            "selected_at",
+            "request_started_at",
+            "reply_observed_at",
+            "reply_error_code",
+            "target_age_seconds",
+            "actual_age_seconds",
+            "api_scope",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "quotes",
+            "verified_external_replies",
+            "own_reply_count",
+            "organic_reply_status",
+            "error_code"
+          ],
+          "rows": 3,
+          "values_sha256": "25660c3952e5146125e08bda84a8e350df8b0feeedb29a085d6784c0db08d2ba"
+        },
+        "metric_attempts": {
+          "columns": [
+            "id",
+            "part_id",
+            "window",
+            "status",
+            "observed_at",
+            "selected_at",
+            "request_started_at",
+            "reply_observed_at",
+            "reply_error_code",
+            "target_age_seconds",
+            "actual_age_seconds",
+            "api_scope",
+            "views",
+            "likes",
+            "replies",
+            "reposts",
+            "quotes",
+            "verified_external_replies",
+            "own_reply_count",
+            "organic_reply_status",
+            "error_code"
+          ],
+          "rows": 3,
+          "values_sha256": "25660c3952e5146125e08bda84a8e350df8b0feeedb29a085d6784c0db08d2ba"
+        },
+        "publication_slots": {
+          "columns": [
+            "id",
+            "local_day",
+            "slot_key",
+            "target_at",
+            "closes_at",
+            "status",
+            "event_id",
+            "reserved_at",
+            "reason",
+            "reservation_commit_sha",
+            "result_commit_sha"
+          ],
+          "rows": 4,
+          "values_sha256": "e3c2785c44b2e6ea356fcc10d1739faf9610e084a2fb61df000dfb881b4d6952"
+        },
+        "slot_attempts": {
+          "columns": [
+            "id",
+            "slot_id",
+            "run_id",
+            "event",
+            "schedule",
+            "source_sha",
+            "observed_at",
+            "decision",
+            "persistence_status",
+            "checkpoint_commit_sha"
+          ],
+          "rows": 2,
+          "values_sha256": "f18b56fa03f8dfd94cf3682b89ce2ae05809b979338d56e3eea41bce6ea9e024"
+        }
+      }
+    }
+  ]
+}

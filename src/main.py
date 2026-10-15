@@ -11,6 +11,7 @@ from src.core.logger import logger
 from src.data.database import AsyncSessionLocal, init_db
 from src.data.publication_slots import RunIdentity, SlotStore
 from src.data.repository import HistoryRepository
+from src.dispatch_metadata import read_dispatch
 from src.event_preparation import PreparationServices, prepare_event
 from src.git_database import GitDatabaseCheckpoint
 from src.platform_publication import PublicationAdapters, PublicationContext, publish_prepared_event
@@ -36,7 +37,10 @@ async def main() -> None:
         logger.info("Dry run: no slot is consumed and no publication is called")
         return
     identity = RunIdentity(os.getenv("GITHUB_RUN_ID", "local"), os.getenv("GITHUB_EVENT_NAME", "manual"),
-        os.getenv("ZAMANIN_SCHEDULE", "unknown"), os.getenv("ZAMANIN_SOURCE_SHA", os.getenv("GITHUB_SHA", "unknown")))
+        os.getenv("ZAMANIN_SCHEDULE", "unknown"), os.getenv("ZAMANIN_SOURCE_SHA", os.getenv("GITHUB_SHA", "unknown")),
+        read_dispatch(os.environ))
+    logger.info("Publication workflow_source={} checkout={}", os.getenv("GITHUB_SHA", "unknown"),
+        identity.source_sha)
     context = PublicationRun(SlotStore(AsyncSessionLocal), GitDatabaseCheckpoint(Path.cwd()),
         publication_clock, identity, _publish_reserved_slot)
     await execute_publication_run(context)

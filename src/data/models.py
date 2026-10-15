@@ -47,6 +47,12 @@ class SlotAttempt(Base):
     persistence_status: Mapped[str] = mapped_column(String(32), nullable=False)
     checkpoint_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
+    trigger_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    intended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    intended_day: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    intended_slot: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
 
 @dataclass(frozen=True)
 class PostMetadata:

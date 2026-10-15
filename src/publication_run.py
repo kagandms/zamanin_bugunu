@@ -6,6 +6,7 @@ from datetime import datetime
 
 from src.core.logger import logger
 from src.data.publication_slots import RunIdentity, SlotStore
+from src.dispatch_metadata import format_dispatch
 from src.git_database import DatabaseCheckpoint
 from src.publication_gate import PublicationGate
 from src.publication_policy import ISTANBUL, require_utc
@@ -24,6 +25,7 @@ class PublicationRun:
 async def execute_publication_run(context: PublicationRun) -> str:
     """Run at most one claimed slot; persist results even after operational failure."""
     observed = require_utc(context.clock())
+    logger.info("Dispatch metadata {}", format_dispatch(context.identity.dispatch))
     decision = await context.slots.claim(observed, context.identity)
     logger.info("Slot decision={} run={} event={} schedule={} source_sha={} utc={} tsi={}",
         decision.status, context.identity.run_id, context.identity.event, context.identity.schedule,
