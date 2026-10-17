@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { planDispatch, findSlot, PUBLICATION_CRON, ANALYTICS_CRON } from '../build/policy.js';
+import { dispatchOnce } from '../build/dispatch.js';
 import { handleScheduled, rejectHttp } from '../build/index.js';
 
 const ENV = { DISPATCH_ENABLED: 'true', GITHUB_DISPATCH_TOKEN: 'mock-token-do-not-log' };
@@ -66,11 +67,13 @@ test('fixed workflow repo and main ref, deterministic metadata on duplicate deli
   const sample = fixture({ responses: [new Response(null, { status: 204 }), new Response(null, { status: 204 })] });
   await handleScheduled(event(), ENV, sample.edge);
   await handleScheduled(event(), ENV, sample.edge);
-  assert.deepEqual(sample.requests[0], sample.requests[1]);
-  const [url, request] = sample.requests[0];
-  assert.equal(url, 'https://api.github.com/repos/kagandms/zamanin_bugunu/actions/workflows/schedule.yml/dispatches');
+  const [request] = sample.requests[0];
+  const [duplicateRequest] = sample.requests[1];
+  assert.equal(request.url, duplicateRequest.url);
+  assert.equal(await request.clone().text(), await duplicateRequest.clone().text());
+  assert.equal(request.url, 'https://api.github.com/repos/kagandms/zamanin_bugunu/actions/workflows/schedule.yml/dispatches');
   assert.equal(request.redirect, 'error');
-  const payload = JSON.parse(request.body);
+  const payload = await request.clone().json();
   assert.equal(payload.ref, 'main');
   assert.equal(payload.inputs.intended_day, '2026-10-15');
   assert.equal(payload.inputs.intended_slot, 'morning');
@@ -82,8 +85,8 @@ test('analytics dispatch has no slot and only targets analytics workflow', async
   const now = epoch('21:37:00');
   const sample = fixture({ now });
   await handleScheduled(event(now, ANALYTICS_CRON), ENV, sample.edge);
-  assert.match(sample.requests[0][0], /analytics.yml\/dispatches$/);
-  assert.equal(JSON.parse(sample.requests[0][1].body).inputs.intended_slot, '');
+  assert.match(sample.requests[0][0].url, /analytics.yml\/dispatches$/);
+  assert.equal((await sample.requests[0][0].clone().json()).inputs.intended_slot, '');
 });
 
 test('documented 200 run details and legacy 204 are accepted independently of execution', async () => {
@@ -136,14 +139,47 @@ test('retry revalidates actual clock after delay crosses a closing boundary', as
   assert.equal(delayed.records.at(-1).stage, 'retry_skipped');
 });
 
-test('network/timeout errors are unknown, sanitized and not retried', async () => {
+test('fetch rejection and timeout are separately labeled, sanitized and not retried', async () => {
   for (const failure of [new Error('Authorization: mock-token-do-not-log'), new DOMException('token-url', 'TimeoutError')]) {
     const sample = fixture({ failure });
     await handleScheduled(event(), ENV, sample.edge);
     assert.equal(sample.requests.length, 1);
-    assert.equal(sample.records.find(record => record.stage === 'dispatch_result').status, 'unknown');
+    const result = sample.records.find(record => record.stage === 'dispatch_result');
+    assert.equal(result.status, 'unknown');
+    assert.equal(result.phase, 'fetch');
+    assert.equal(result.reason, failure.name === 'TimeoutError' ? 'timeout' : 'fetch_rejected');
+    assert.equal(typeof result.elapsedMs, 'number');
     assert.equal(JSON.stringify(sample.records).includes('token'), false);
   }
+});
+
+test('request-construction errors never call fetch and expose only fixed diagnostic fields', async () => {
+  const requests = [], records = [];
+  const errorToken = 'mock-secret-do-not-log';
+  const eventAt = epoch('06:07:00');
+  const env = { DISPATCH_ENABLED: 'true', GITHUB_DISPATCH_TOKEN: `${errorToken}\ninvalid-header` };
+  await handleScheduled(event(eventAt), env, {
+    now: () => eventAt, fetch: async request => { requests.push(request); return new Response(null, { status: 204 }); },
+    sleep: async () => {}, log: record => records.push(record),
+  });
+  assert.equal(requests.length, 0);
+  const result = records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.phase, 'request');
+  assert.equal(result.reason, 'request_error');
+  assert.equal(result.errorName, 'TypeError');
+  assert.equal(typeof result.elapsedMs, 'number');
+  assert.equal(JSON.stringify(records).includes(errorToken), false);
+  assert.equal(JSON.stringify(records).includes('invalid-header'), false);
+});
+
+test('direct request diagnostics keep HTTP response status separate from fetch errors', async () => {
+  const plan = planDispatch(event(), epoch('06:07:00'));
+  assert.equal(plan.status, 'ready');
+  const result = await dispatchOnce(plan.plan, {
+    token: 'mock-token-do-not-log', fetch: async () => new Response('sensitive body', { status: 403 }), now: () => 10,
+  });
+  assert.deepEqual(result, { status: 'rejected', httpStatus: 403, retryAfterMs: null, elapsedMs: 0 });
 });
 
 test('HTTP methods cannot dispatch even with arbitrary URL/body selectors', async () => {
