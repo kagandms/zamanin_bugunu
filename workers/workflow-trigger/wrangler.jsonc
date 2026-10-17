@@ -7,6 +7,5 @@
   "preview_urls": false,
   "vars": {"DISPATCH_ENABLED": "false"},
   "triggers": {"crons": ["7,27,47 * * * *", "37 * * * *"]},
-  "limits": {"cpu_ms": 10},
   "observability": {"enabled": true}
 }
