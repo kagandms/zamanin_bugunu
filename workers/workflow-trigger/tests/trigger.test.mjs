@@ -182,6 +182,7 @@ test('request-construction errors never call fetch and expose only fixed diagnos
   assert.equal(result.status, 'unknown');
   assert.equal(result.phase, 'request');
   assert.equal(result.reason, 'request_error');
+  assert.equal(result.requestComponent, 'headers');
   assert.equal(result.errorName, 'TypeError');
   assert.equal(typeof result.elapsedMs, 'number');
   assert.equal(JSON.stringify(records).includes(errorToken), false);

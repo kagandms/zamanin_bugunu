@@ -11,7 +11,7 @@ export type DispatchResult =
   | { readonly status: "rejected"; readonly httpStatus: number; readonly retryAfterMs: number | null; readonly elapsedMs: number }
   | { readonly status: "unknown"; readonly reason: "request_error" | "fetch_rejected" | "response_error" | "timeout" | "server_error";
       readonly phase: "request" | "fetch" | "response"; readonly errorName?: string; readonly causeCode?: string;
-      readonly elapsedMs: number; readonly httpStatus?: number };
+      readonly elapsedMs: number; readonly httpStatus?: number; readonly requestComponent?: "url" | "body" | "headers" | "request_init" };
 
 const SAFE_ERROR_NAMES = new Set(["TypeError", "AbortError", "TimeoutError", "RangeError", "Error"]);
 const SAFE_CAUSE_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]);
@@ -52,6 +52,13 @@ function unknownFailure(error: unknown, phase: "request" | "fetch" | "response",
   return { status: "unknown", reason, phase, errorName, ...(causeCode ? { causeCode } : {}), elapsedMs: elapsedSince(startedAt, now) };
 }
 
+function requestFailure(error: unknown, requestComponent: "url" | "body" | "headers" | "request_init",
+  startedAt: number, now: () => number): Extract<DispatchResult, { readonly status: "unknown" }> {
+  const causeCode = safeCauseCode(error);
+  return { status: "unknown", reason: "request_error", phase: "request", errorName: safeErrorName(error),
+    ...(causeCode ? { causeCode } : {}), elapsedMs: elapsedSince(startedAt, now), requestComponent };
+}
+
 /** Parse only a documented positive run ID; never forward an untrusted response URL or message. */
 function readRunId(payload: unknown): number | null {
   if (typeof payload !== "object" || payload === null || !("workflow_run_id" in payload)) return null;
@@ -81,19 +88,33 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
     return { status: "rejected", httpStatus: 0, retryAfterMs: null, elapsedMs: 0 };
   const now = runtime.now ?? Date.now;
   const startedAt = now();
+  const { workflow, ...inputs } = plan;
+  let url: URL;
+  try {
+    url = new URL(`${WORKFLOW_URL}${workflow}/dispatches`);
+  } catch (error) {
+    return requestFailure(error, "url", startedAt, now);
+  }
+  let body: string;
+  try {
+    body = JSON.stringify({ ref: "main", inputs });
+  } catch (error) {
+    return requestFailure(error, "body", startedAt, now);
+  }
+  let headers: Headers;
+  try {
+    headers = new Headers({ Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token.trim()}`,
+      "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
+      "Content-Type": "application/json" });
+  } catch (error) {
+    return requestFailure(error, "headers", startedAt, now);
+  }
   let request: Request;
   try {
-    const { workflow, ...inputs } = plan;
-    request = new Request(`${WORKFLOW_URL}${workflow}/dispatches`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token.trim()}`,
-        "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
-        "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: "main", inputs }),
-    });
+    request = new Request(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), headers, body });
   } catch (error) {
-    // Request construction can include credentials; report fixed labels only.
-    return unknownFailure(error, "request", startedAt, now);
+    // Request initialization may include credentials; report only the fixed component label.
+    return requestFailure(error, "request_init", startedAt, now);
   }
   let response: Response;
   try {
