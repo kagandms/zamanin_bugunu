@@ -11,7 +11,8 @@ export type DispatchResult =
   | { readonly status: "rejected"; readonly httpStatus: number; readonly retryAfterMs: number | null; readonly elapsedMs: number }
   | { readonly status: "unknown"; readonly reason: "request_error" | "fetch_rejected" | "response_error" | "timeout" | "server_error";
       readonly phase: "request" | "fetch" | "response"; readonly errorName?: string; readonly causeCode?: string;
-      readonly elapsedMs: number; readonly httpStatus?: number; readonly requestComponent?: "url" | "body" | "headers" | "request_init" };
+      readonly elapsedMs: number; readonly httpStatus?: number; readonly requestComponent?:
+        "url" | "body" | "headers" | "request_init_url" | "method" | "redirect" | "request_headers" | "request_body" | "signal" | "request_init_combination" };
 
 const SAFE_ERROR_NAMES = new Set(["TypeError", "AbortError", "TimeoutError", "RangeError", "Error"]);
 const SAFE_CAUSE_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]);
@@ -52,11 +53,29 @@ function unknownFailure(error: unknown, phase: "request" | "fetch" | "response",
   return { status: "unknown", reason, phase, errorName, ...(causeCode ? { causeCode } : {}), elapsedMs: elapsedSince(startedAt, now) };
 }
 
-function requestFailure(error: unknown, requestComponent: "url" | "body" | "headers" | "request_init",
+type RequestComponent = "url" | "body" | "headers" | "request_init_url" | "method" | "redirect"
+  | "request_headers" | "request_body" | "signal" | "request_init_combination";
+
+function requestFailure(error: unknown, requestComponent: RequestComponent,
   startedAt: number, now: () => number): Extract<DispatchResult, { readonly status: "unknown" }> {
   const causeCode = safeCauseCode(error);
   return { status: "unknown", reason: "request_error", phase: "request", errorName: safeErrorName(error),
     ...(causeCode ? { causeCode } : {}), elapsedMs: elapsedSince(startedAt, now), requestComponent };
+}
+
+function diagnoseRequestInit(url: URL, headers: Headers, body: string): RequestComponent {
+  const signal = AbortSignal.timeout(5000);
+  const checks: readonly [RequestComponent, RequestInit][] = [
+    ["request_init_url", {}], ["method", { method: "POST" }],
+    ["redirect", { method: "POST", redirect: "error" }],
+    ["request_headers", { method: "POST", headers }], ["request_body", { method: "POST", body }],
+    ["signal", { method: "POST", signal }],
+  ];
+  for (const [component, init] of checks) {
+    try { new Request(url, init); }
+    catch { return component; }
+  }
+  return "request_init_combination";
 }
 
 /** Parse only a documented positive run ID; never forward an untrusted response URL or message. */
@@ -114,7 +133,7 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
     request = new Request(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), headers, body });
   } catch (error) {
     // Request initialization may include credentials; report only the fixed component label.
-    return requestFailure(error, "request_init", startedAt, now);
+    return requestFailure(error, diagnoseRequestInit(url, headers, body), startedAt, now);
   }
   let response: Response;
   try {
