@@ -122,7 +122,7 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
   }
   let headers: Headers;
   try {
-    headers = new Headers({ Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token.trim()}`,
+    headers = new Headers({ Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token}`,
       "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
       "Content-Type": "application/json" });
   } catch (error) {
