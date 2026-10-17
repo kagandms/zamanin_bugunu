@@ -86,7 +86,7 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
     const { workflow, ...inputs } = plan;
     request = new Request(`${WORKFLOW_URL}${workflow}/dispatches`, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token}`,
+      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token.trim()}`,
         "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
         "Content-Type": "application/json" },
       body: JSON.stringify({ ref: "main", inputs }),

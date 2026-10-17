@@ -197,6 +197,21 @@ test('direct request diagnostics keep HTTP response status separate from fetch e
   assert.deepEqual(result, { status: 'rejected', httpStatus: 403, retryAfterMs: null, elapsedMs: 0 });
 });
 
+test('authorization header trims surrounding secret whitespace before Request construction', async () => {
+  const plan = planDispatch(event(), epoch('06:07:00'));
+  assert.equal(plan.status, 'ready');
+  let authorizationHeader = '';
+  const result = await dispatchOnce(plan.plan, {
+    token: 'mock-token-do-not-log\r\n',
+    fetch: async request => {
+      authorizationHeader = request.headers.get('Authorization') ?? '';
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.equal(result.status, 'accepted');
+  assert.equal(authorizationHeader, 'Bearer mock-token-do-not-log');
+});
+
 test('HTTP methods cannot dispatch even with arbitrary URL/body selectors', async () => {
   for (const [method, status] of [['GET', 404], ['HEAD', 404], ['POST', 405], ['PUT', 405], ['OPTIONS', 405]]) {
     const response = await rejectHttp(new Request('https://worker.invalid/dispatch?repo=evil&ref=branch', { method }));
