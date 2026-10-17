@@ -72,7 +72,7 @@ test('fixed workflow repo and main ref, deterministic metadata on duplicate deli
   assert.equal(request.url, duplicateRequest.url);
   assert.equal(await request.clone().text(), await duplicateRequest.clone().text());
   assert.equal(request.url, 'https://api.github.com/repos/kagandms/zamanin_bugunu/actions/workflows/schedule.yml/dispatches');
-  assert.equal(request.redirect, 'error');
+  assert.equal(request.redirect, 'manual');
   const payload = await request.clone().json();
   assert.equal(payload.ref, 'main');
   assert.equal(payload.inputs.intended_day, '2026-10-15');

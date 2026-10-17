@@ -67,7 +67,7 @@ function diagnoseRequestInit(url: URL, headers: Headers, body: string): RequestC
   const signal = AbortSignal.timeout(5000);
   const checks: readonly [RequestComponent, RequestInit][] = [
     ["request_init_url", {}], ["method", { method: "POST" }],
-    ["redirect", { method: "POST", redirect: "error" }],
+    ["redirect", { method: "POST", redirect: "manual" }],
     ["request_headers", { method: "POST", headers }], ["request_body", { method: "POST", body }],
     ["signal", { method: "POST", signal }],
   ];
@@ -130,7 +130,7 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
   }
   let request: Request;
   try {
-    request = new Request(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), headers, body });
+    request = new Request(url, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), headers, body });
   } catch (error) {
     // Request initialization may include credentials; report only the fixed component label.
     return requestFailure(error, diagnoseRequestInit(url, headers, body), startedAt, now);
