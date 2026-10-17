@@ -153,6 +153,21 @@ test('fetch rejection and timeout are separately labeled, sanitized and not retr
   }
 });
 
+test('diagnostic allowlists tolerate hostile error properties without leaking them', async () => {
+  const failure = Object.defineProperties({}, {
+    name: { get() { throw new Error('credential in name getter'); } },
+    cause: { get() { throw new Error('credential in cause getter'); } },
+  });
+  const sample = fixture({ failure });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.phase, 'fetch');
+  assert.equal(result.reason, 'fetch_rejected');
+  assert.equal(result.errorName, 'Other');
+  assert.equal(JSON.stringify(sample.records).includes('credential'), false);
+});
+
 test('request-construction errors never call fetch and expose only fixed diagnostic fields', async () => {
   const requests = [], records = [];
   const errorToken = 'mock-secret-do-not-log';

@@ -17,16 +17,24 @@ const SAFE_ERROR_NAMES = new Set(["TypeError", "AbortError", "TimeoutError", "Ra
 const SAFE_CAUSE_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]);
 
 function safeErrorName(error: unknown): string {
-  const name = error instanceof Error ? error.name : "";
-  return SAFE_ERROR_NAMES.has(name) ? name : "Other";
+  try {
+    const name = error instanceof Error ? error.name : "";
+    return SAFE_ERROR_NAMES.has(name) ? name : "Other";
+  } catch {
+    return "Other";
+  }
 }
 
 function safeCauseCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("cause" in error)) return undefined;
-  const cause: unknown = error.cause;
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
-  const code = cause.code;
-  return typeof code === "string" && SAFE_CAUSE_CODES.has(code) ? code : undefined;
+  try {
+    if (typeof error !== "object" || error === null || !("cause" in error)) return undefined;
+    const cause: unknown = error.cause;
+    if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+    const code = cause.code;
+    return typeof code === "string" && SAFE_CAUSE_CODES.has(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function elapsedSince(startedAt: number, now: () => number): number {
