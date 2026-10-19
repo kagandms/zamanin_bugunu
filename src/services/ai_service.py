@@ -6,6 +6,7 @@ from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
     EventRewriteRequest,
     get_source_fact_status,
+    has_relevant_source_context,
     resolve_fact_profile,
     validate_event_content,
 )
@@ -107,7 +108,7 @@ class AIService:
         self.last_source_fact_status = "not_checked"
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
-        self.prompt_version = f"event-rewrite-v2+{CONTENT_GUARD_VERSION}"
+        self.prompt_version = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
         self.headers = {
@@ -185,14 +186,9 @@ class AIService:
             logger.warning("⚠️ Content validation FAILED: Contains <unk> or special tokens.")
             return False
 
-        # Check 1: Structure must contain '---' separator
-        if "---" not in clean_text:
-            logger.warning("⚠️ Content validation FAILED: Missing '---' section separator.")
-            return False
-
         sections = [s.strip() for s in clean_text.split("---") if s.strip()]
-        if len(sections) < 2 or len(sections) > 4:
-            logger.warning(f"⚠️ Content validation FAILED: Invalid section count ({len(sections)}). Expected 2-4.")
+        if len(sections) > 3:
+            logger.warning(f"⚠️ Content validation FAILED: Invalid section count ({len(sections)}). Expected 1-3.")
             return False
 
         # Check 2: First section MUST have the date header or emoji
@@ -281,6 +277,7 @@ class AIService:
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
         profile = resolve_fact_profile(request)
+        source_context = request.source_context if has_relevant_source_context(request) else None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
         system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
@@ -289,7 +286,10 @@ class AIService:
         payload = {
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Kaynak olay: {request.original_text}{year_context}\nKaynak dışı sayfa özeti kullanma."}
+                {"role": "user", "content": (
+                    f"Kaynak olay: {request.original_text}{year_context}\n"
+                    f"İlgili kaynak sayfası özeti: {source_context or 'Sağlanmadı.'}"
+                )}
             ],
             "stream": False,
             "temperature": 0.3,
@@ -391,11 +391,14 @@ class AIService:
     def _build_system_prompt(request: EventRewriteRequest, trusted_facts: tuple[str, ...]) -> str:
         fact_context = "\n".join(f"- {fact}" for fact in trusted_facts)
         return (
-            "Türkçe tarih içerikleri yaz. Yalnızca kullanıcı mesajındaki kaynak olay ve aşağıdaki doğrulanmış "
-            "olguları kullan; kaynakta olmayan kişi, yer, sayı, tarih, alıntı, neden veya taraf ekleme. "
+            "Türkçe tarih içerikleri yaz. Yalnızca kullanıcı mesajındaki kaynak olay, ilgili kaynak sayfası özeti "
+            "ve aşağıdaki doğrulanmış olguların açıkça desteklediği iddiaları kullan; kaynakta olmayan kişi, yer, "
+            "sayı, tarih, alıntı, neden veya taraf ekleme. "
             "Bir cepheye ait sonucu savaşın tamamına genelleme. Çarpıcı ama karşı iddia uydurmayan bir anlatım kullan. "
-            "Kurum sayfası özeti olay kaynağı değildir. Tam metni üret; bölümleri --- ile ayır; HTML, açıklama veya "
-            "soru zorunlu değildir. GORSEL_PROMPT yalnız kaynakça desteklenen görsel ayrıntılarını içerebilir.\n"
+            "İlk bölüm olayı kısa ve doğru anlatsın. İkinci bölümü yalnız kaynakta veya doğrulanmış olgularda bulunan tarihsel bağlam veya sonuç "
+            "ekliyorsa üret; gerekirse doğal bir soru ekle. Bağlam yoksa tek bölüm üret ve eksik doğrulamayı açıkça "
+            "belirt. Genel takip çağrısı veya başka bir tanıtım metnini ayrı bölüm yapma. Bölümleri --- ile ayır; "
+            "HTML veya açıklama ekleme. GORSEL_PROMPT yalnız kaynakça desteklenen görsel ayrıntılarını içerebilir.\n"
             f"Tarih başlığı: 🕊️ Tarihte Bugün ({request.formatted_date})\n"
             f"Doğrulanmış olay olguları:\n{fact_context or '- Ek doğrulanmış olgu sağlanmadı.'}"
         )
@@ -409,6 +412,11 @@ class AIService:
             self.last_source_fact_status = get_source_fact_status(profile)
             self.last_language_format_status = "fallback_template"
             self.last_generation_type = f"source_fallback:{reason}"
+            if profile.profile_id == "ii-kosovo-1448":
+                return [
+                    f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{profile.fallback_context[0]}",
+                    profile.fallback_context[1],
+                ], [], None
             parts = [
                 f"🕊️ Tarihte Bugün ({request.formatted_date}) Kars Antlaşması, 13 Ekim 1921'de Kars'ta imzalandı.",
                 "Türk Tarih Kurumu Kütüphanesi kaydı Türkiye, Ermenistan, Azerbaycan ve Gürcistan hükümetlerini taraf olarak listeliyor.",
@@ -422,11 +430,41 @@ class AIService:
         self.last_source_url = request.source_url
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "fallback_template"
-        self.last_generation_type = f"source_fallback:{reason}"
+        self.last_generation_type = f"source_fallback:{reason}:thin_source"
         source_event = request.original_text.strip()
-        if len(source_event) > settings.MAX_THREAD_LENGTH - 80:
-            source_event = source_event[: settings.MAX_THREAD_LENGTH - 83].rstrip() + "..."
-        return [f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{source_event}\n\n#tarih #tarihteneoldu"], [], None
+        header = f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n"
+        source_context = request.source_context if has_relevant_source_context(request) else None
+        context_prefix = "Kaynak özeti: "
+        source_excerpt = self._source_excerpt(
+            source_context, settings.MAX_THREAD_LENGTH - len(context_prefix)
+        )
+        if source_excerpt:
+            main_part = f"{header}{source_event}"
+            available_length = settings.MAX_THREAD_LENGTH
+            if len(main_part) > available_length:
+                main_part = main_part[:available_length - 3].rstrip() + "..."
+            context_part = f"{context_prefix}{source_excerpt}"
+            self.last_generation_type = f"source_fallback:{reason}:source_context"
+            return [main_part, context_part], [], None
+        limitation = "\n\nKaynakta ek tarihsel bağlam doğrulanamadı."
+        hashtags = "\n\n#tarih #tarihteneoldu"
+        available_length = settings.MAX_THREAD_LENGTH - len(header + limitation + hashtags)
+        if len(source_event) > available_length:
+            source_event = source_event[:available_length - 3].rstrip() + "..."
+        return [f"{header}{source_event}{limitation}{hashtags}"], [], None
+
+    @staticmethod
+    def _source_excerpt(source_context: Optional[str], max_chars: int) -> Optional[str]:
+        if not source_context or not source_context.strip():
+            return None
+        sentences = re.findall(r"[^.!?]+(?:[.!?]+|$)", source_context.strip())
+        selected: list[str] = []
+        for sentence in sentences[:2]:
+            candidate = " ".join((*selected, sentence.strip()))
+            if len(candidate) > max_chars:
+                break
+            selected.append(sentence.strip())
+        return " ".join(selected) or None
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Return a fully validated generation or a factual source-only fallback."""

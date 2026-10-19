@@ -12,11 +12,10 @@ from src.core.logger import logger
 from src.data.models import EventReservation, PostMetadata
 from src.data.repository import HistoryRepository
 from src.services.ai_service import AIService
-from src.services.content_guard import EventRewriteRequest
+from src.services.content_guard import EventRewriteRequest, has_relevant_source_context
 from src.services.content_service import ContentService
 from src.services.image_service import ImageService
 
-THREADS_FOOTER = "Resmi tarihin ötesini, arşiv belgelerini ve unutulan kırılma anlarını her gün keşfetmek için takip edin 👉 @zamaninbugunu"
 TELEGRAM_FOOTER = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
 
 
@@ -60,11 +59,16 @@ def _source_url(candidate: dict[str, object]) -> str | None:
 def _rewrite_request(candidate: dict[str, object], observed: datetime) -> EventRewriteRequest:
     year = candidate.get("year")
     page = _first_page(candidate)
-    return EventRewriteRequest(original_text=candidate["text"],
+    extract = page.get("extract")
+    source_context = extract[:3000].strip() if isinstance(extract, str) and extract.strip() else None
+    request = EventRewriteRequest(original_text=candidate["text"],
         formatted_date=f"{observed.day}.{observed.month}" + (f".{year}" if year else ""),
         year=str(year) if year is not None else None,
         source_title=(page.get("titles") or {}).get("canonical") or page.get("title"),
-        source_url=_source_url(candidate))
+        source_url=_source_url(candidate), source_context=source_context)
+    if has_relevant_source_context(request):
+        return request
+    return replace(request, source_context=None)
 
 
 async def _select_event(services: PreparationServices, history: HistoryRepository,
@@ -133,7 +137,7 @@ async def prepare_event(services: PreparationServices, history: HistoryRepositor
     image = PreparedImage(url, await services.image.download_image(url), image_source)
     blocks = tuple(block if len(block) <= settings.MAX_THREAD_LENGTH else
         block[:settings.MAX_THREAD_LENGTH - 3] + "..." for block in rewrite.blocks)[:3]
-    threads = blocks + (THREADS_FOOTER,)
+    threads = blocks
     metadata = _metadata(rewrite, services.ai, image)
     metadata = replace(metadata, published_text="\n\n".join(threads))
     candidate = rewrite.candidate
