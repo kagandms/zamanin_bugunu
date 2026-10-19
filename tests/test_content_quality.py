@@ -11,7 +11,7 @@ from src.services.ai_service import AIService
 from src.services.content_guard import (
     EventRewriteRequest,
     II_MURAD_SOURCE_URL,
-    II_KOSOVO_SOURCE_URL,
+    TDV_MURAD_II_SOURCE_URL,
     get_source_fact_status,
     resolve_fact_profile,
 )
@@ -32,9 +32,13 @@ def test_ii_kosovo_profile_requires_matching_source_and_year() -> None:
 
     assert profile is not None
     assert profile.profile_id == "ii-kosovo-1448"
-    assert profile.source_url == II_KOSOVO_SOURCE_URL
+    assert profile.source_url == TDV_MURAD_II_SOURCE_URL
     assert get_source_fact_status(profile) == "checked_scoped"
-    assert "19 Ekim sabahı son barikatlar aşıldı" in profile.facts[0]
+    assert "17-20 Ekim 1448" in profile.facts[0]
+    assert "üç gün süren çetin muharebeden sonra Macarlar yenildi" in profile.facts[0]
+    assert "19 Ekim sabahı" not in profile.facts[0]
+    assert "son barikatlar aşıldı" not in profile.facts[0]
+    assert "Balkanlar'da yayılmasının ve yerleşmesinin kesinleştiğini" in profile.facts[1]
 
 
 def test_ii_kosovo_profile_does_not_match_an_unrelated_source() -> None:
@@ -62,13 +66,11 @@ async def test_generation_failure_uses_curated_ii_kosovo_context(
 
     assert len(parts) == 2
     assert "19.10.1448" in parts[0]
-    assert "II. Murad'ın yönettiği" in parts[0]
-    assert "son barikatlar aşıldı" in parts[0]
-    assert "kesin Osmanlı zaferiyle sonuçlandı" in parts[0]
-    assert "Balkanlar'ı geri alma girişimlerini uzun süre durdurdu" in parts[1]
-    assert "batıdan İstanbul'a gelebilecek askerî tehdit de azaldı" in parts[1]
+    assert "17-20 Ekim 1448'te yapıldı" in parts[0]
+    assert "Macarlar yenildi" in parts[0]
+    assert "Balkanlar'da yayılmasının ve yerleşmesinin kesinleştiğini" in parts[1]
     assert service.last_source_fact_status == "checked_scoped"
-    assert service.last_source_url == II_KOSOVO_SOURCE_URL
+    assert service.last_source_url == TDV_MURAD_II_SOURCE_URL
 
 
 @pytest.mark.asyncio
@@ -138,7 +140,7 @@ async def test_generic_follow_call_is_not_a_second_threads_part() -> None:
         last_source_fact_status = "checked_scoped"
         last_language_format_status = "passed"
         last_source_id = "curated-test-source"
-        last_source_url = II_KOSOVO_SOURCE_URL
+        last_source_url = TDV_MURAD_II_SOURCE_URL
         prompt_version = "event-rewrite-v3+fact-guard-v3"
 
         async def rewrite_event_safe(

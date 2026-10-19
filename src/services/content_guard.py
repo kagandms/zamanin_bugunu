@@ -10,7 +10,7 @@ CONTENT_GUARD_VERSION = "fact-guard-v3"
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
 II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
-II_KOSOVO_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Kosova_Muharebesi"
+TDV_MURAD_II_SOURCE_URL = "https://islamansiklopedisi.org.tr/murad-ii"
 
 
 @dataclass(frozen=True)
@@ -69,17 +69,17 @@ def _resolve_ii_kosovo_profile(request: EventRewriteRequest) -> Optional[EventFa
         return None
     return EventFactProfile(
         profile_id="ii-kosovo-1448",
-        source_id="tr-wikipedia-II-Murad+II-Kosova-Muharebesi",
-        source_url=II_KOSOVO_SOURCE_URL,
+        source_id="tdv-murad-ii",
+        source_url=TDV_MURAD_II_SOURCE_URL,
         facts=(
-            "II. Kosova Muharebesi'nde 19 Ekim sabahı son barikatlar aşıldı ve savaş kesin Osmanlı zaferiyle sonuçlandı.",
-            "Kaynak, yenilginin Balkanlar'ı geri alma girişimlerini uzun süre durdurduğunu ve İstanbul'a batıdan gelebilecek askerî tehdidi azalttığını belirtiyor.",
+            "II. Murad, 852 (1448) yazında Kosova ovasında Yanko'nun kuvvetlerini karşıladı; üç gün süren çetin muharebeden sonra Macarlar yenildi (18-21 Şaban 852 / 17-20 Ekim 1448).",
+            "TDV, II. Murad döneminde Osmanlıların Balkanlar'da yayılmasının ve yerleşmesinin kesinleştiğini kaydeder.",
         ),
         event_years=("1448",),
         context_years=(),
         fallback_context=(
-            "II. Murad'ın yönettiği II. Kosova Muharebesi'nde son barikatlar aşıldı; savaş kesin Osmanlı zaferiyle sonuçlandı.",
-            "Kaynağa göre bu yenilgi, Balkanlar'ı geri alma girişimlerini uzun süre durdurdu; batıdan İstanbul'a gelebilecek askerî tehdit de azaldı.",
+            "II. Kosova Muharebesi 17-20 Ekim 1448'te yapıldı. Üç gün süren çetin muharebeden sonra Macarlar yenildi.",
+            "TDV İslâm Ansiklopedisi, II. Murad döneminde Osmanlıların Balkanlar'da yayılmasının ve yerleşmesinin kesinleştiğini kaydediyor.",
         ),
     )
 
