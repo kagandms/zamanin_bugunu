@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-CONTENT_GUARD_VERSION = "fact-guard-v3"
+CONTENT_GUARD_VERSION = "fact-guard-v4"
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
 II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
@@ -20,6 +20,7 @@ class EventRewriteRequest:
     year: Optional[str] = None
     source_title: Optional[str] = None
     source_url: Optional[str] = None
+    source_context: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ def validate_event_content(
 ) -> tuple[str, ...]:
     """Reject known source contradictions without treating keywords as global bans."""
     if profile is None:
-        return ()
+        return _validate_unprofiled_years(parts, request)
 
     normalized = normalize_fact_text("\n".join(parts))
     reasons: list[str] = []
@@ -107,6 +108,56 @@ def validate_event_content(
     if _contains_unsupported_year(normalized, profile):
         reasons.append("unsupported_year")
     return tuple(reasons)
+
+
+def has_relevant_source_context(request: EventRewriteRequest) -> bool:
+    """Accept a linked extract only when its title or event anchors match the event."""
+    if not request.source_context or not request.source_context.strip():
+        return False
+
+    context = _source_terms(request.source_context)
+    title = _source_terms(request.source_title or "")
+    if title and title.issubset(context):
+        return True
+
+    event = _source_terms(request.original_text)
+    return len(_matching_source_terms(event, context)) >= 2
+
+
+def _source_terms(text: str) -> set[str]:
+    normalized = normalize_fact_text(text)
+    return {
+        term for term in re.findall(r"[a-z0-9]+", normalized)
+        if len(term) >= 5 and term not in _SOURCE_CONTEXT_STOPWORDS
+    }
+
+
+def _matching_source_terms(event_terms: set[str], context_terms: set[str]) -> set[str]:
+    return {
+        event_term for event_term in event_terms
+        if any(_terms_share_stem(event_term, context_term) for context_term in context_terms)
+    }
+
+
+def _terms_share_stem(left: str, right: str) -> bool:
+    shorter, longer = sorted((left, right), key=len)
+    return shorter == longer or (len(shorter) >= 5 and longer.startswith(shorter[:5]))
+
+
+_SOURCE_CONTEXT_STOPWORDS = {"ancak", "olarak", "sonra", "bunun", "birçok", "daha", "kadar"}
+
+
+def _validate_unprofiled_years(parts: list[str], request: EventRewriteRequest) -> tuple[str, ...]:
+    source_context = request.source_context if has_relevant_source_context(request) else ""
+    evidence = normalize_fact_text(" ".join((request.original_text, source_context)))
+    generated = normalize_fact_text("\n".join(parts))
+    generated_years = re.findall(r"\b(?:1[0-9]{3}|20[0-9]{2})\b", generated)
+    supported_years = set(re.findall(r"\b(?:1[0-9]{3}|20[0-9]{2})\b", evidence))
+    if request.year:
+        supported_years.add(request.year)
+    if any(year not in supported_years for year in generated_years):
+        return ("unsupported_year",)
+    return ()
 
 
 def _claims_moscow_as_kars_signing_place(text: str) -> bool:

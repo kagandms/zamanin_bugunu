@@ -183,6 +183,26 @@ class ContentService:
 
         return score
 
+    @staticmethod
+    def _source_context_score(item: dict) -> int:
+        """Prefer candidates whose linked page offers enough context to support richer copy."""
+        pages = item.get('pages', [])
+        extract = pages[0].get('extract', '') if pages else ''
+        if not isinstance(extract, str):
+            return 0
+
+        score = sum((8 for threshold in (120, 300, 600) if len(extract) >= threshold))
+        if len(re.findall(r'[.!?]+', extract)) >= 3:
+            score += 8
+        if pages[0].get('description'):
+            score += 3
+        return score
+
+    @staticmethod
+    def _popularity_bonus(pageviews: int) -> int:
+        """Keep pageviews useful without allowing them to dominate source depth."""
+        return min(max(pageviews, 0) // 5000, 30)
+
     def _get_dynamic_date_range(self) -> Tuple[str, str]:
         """
         Calculates the last 3 completed calendar months for the Wikimedia pageviews API.
@@ -288,8 +308,10 @@ class ContentService:
                     if main_page_title:
                         pageview_score = await self._get_pageviews(main_page_title, client)
                 
-                # Combine: base score + normalized pageview bonus
-                combined_score = base_score + (pageview_score // 100)
+                # Cap pageviews so popularity cannot overwhelm available source context.
+                popularity_bonus = self._popularity_bonus(pageview_score)
+                context_score = self._source_context_score(item)
+                combined_score = base_score + popularity_bonus + context_score
                 final_scored.append((combined_score, pageview_score, item))
 
             # Sort by combined score

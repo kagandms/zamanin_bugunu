@@ -141,7 +141,7 @@ async def test_generic_follow_call_is_not_a_second_threads_part() -> None:
         last_language_format_status = "passed"
         last_source_id = "curated-test-source"
         last_source_url = TDV_MURAD_II_SOURCE_URL
-        prompt_version = "event-rewrite-v3+fact-guard-v3"
+        prompt_version = "event-rewrite-v4+fact-guard-v4"
 
         async def rewrite_event_safe(
             self, request: EventRewriteRequest

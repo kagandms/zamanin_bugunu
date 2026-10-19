@@ -6,6 +6,7 @@ from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
     EventRewriteRequest,
     get_source_fact_status,
+    has_relevant_source_context,
     resolve_fact_profile,
     validate_event_content,
 )
@@ -107,7 +108,7 @@ class AIService:
         self.last_source_fact_status = "not_checked"
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
-        self.prompt_version = f"event-rewrite-v3+{CONTENT_GUARD_VERSION}"
+        self.prompt_version = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
         self.headers = {
@@ -276,6 +277,7 @@ class AIService:
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
         profile = resolve_fact_profile(request)
+        source_context = request.source_context if has_relevant_source_context(request) else None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
         system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
@@ -284,7 +286,10 @@ class AIService:
         payload = {
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Kaynak olay: {request.original_text}{year_context}\nKaynak dışı sayfa özeti kullanma."}
+                {"role": "user", "content": (
+                    f"Kaynak olay: {request.original_text}{year_context}\n"
+                    f"İlgili kaynak sayfası özeti: {source_context or 'Sağlanmadı.'}"
+                )}
             ],
             "stream": False,
             "temperature": 0.3,
@@ -386,10 +391,11 @@ class AIService:
     def _build_system_prompt(request: EventRewriteRequest, trusted_facts: tuple[str, ...]) -> str:
         fact_context = "\n".join(f"- {fact}" for fact in trusted_facts)
         return (
-            "Türkçe tarih içerikleri yaz. Yalnızca kullanıcı mesajındaki kaynak olay ve aşağıdaki doğrulanmış "
-            "olguları kullan; kaynakta olmayan kişi, yer, sayı, tarih, alıntı, neden veya taraf ekleme. "
+            "Türkçe tarih içerikleri yaz. Yalnızca kullanıcı mesajındaki kaynak olay, ilgili kaynak sayfası özeti "
+            "ve aşağıdaki doğrulanmış olguların açıkça desteklediği iddiaları kullan; kaynakta olmayan kişi, yer, "
+            "sayı, tarih, alıntı, neden veya taraf ekleme. "
             "Bir cepheye ait sonucu savaşın tamamına genelleme. Çarpıcı ama karşı iddia uydurmayan bir anlatım kullan. "
-            "İlk bölüm olayı kısa ve doğru anlatsın. İkinci bölümü yalnız doğrulanmış tarihsel bağlam veya sonuç "
+            "İlk bölüm olayı kısa ve doğru anlatsın. İkinci bölümü yalnız kaynakta veya doğrulanmış olgularda bulunan tarihsel bağlam veya sonuç "
             "ekliyorsa üret; gerekirse doğal bir soru ekle. Bağlam yoksa tek bölüm üret ve eksik doğrulamayı açıkça "
             "belirt. Genel takip çağrısı veya başka bir tanıtım metnini ayrı bölüm yapma. Bölümleri --- ile ayır; "
             "HTML veya açıklama ekleme. GORSEL_PROMPT yalnız kaynakça desteklenen görsel ayrıntılarını içerebilir.\n"
@@ -427,12 +433,38 @@ class AIService:
         self.last_generation_type = f"source_fallback:{reason}:thin_source"
         source_event = request.original_text.strip()
         header = f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n"
+        source_context = request.source_context if has_relevant_source_context(request) else None
+        context_prefix = "Kaynak özeti: "
+        source_excerpt = self._source_excerpt(
+            source_context, settings.MAX_THREAD_LENGTH - len(context_prefix)
+        )
+        if source_excerpt:
+            main_part = f"{header}{source_event}"
+            available_length = settings.MAX_THREAD_LENGTH
+            if len(main_part) > available_length:
+                main_part = main_part[:available_length - 3].rstrip() + "..."
+            context_part = f"{context_prefix}{source_excerpt}"
+            self.last_generation_type = f"source_fallback:{reason}:source_context"
+            return [main_part, context_part], [], None
         limitation = "\n\nKaynakta ek tarihsel bağlam doğrulanamadı."
         hashtags = "\n\n#tarih #tarihteneoldu"
         available_length = settings.MAX_THREAD_LENGTH - len(header + limitation + hashtags)
         if len(source_event) > available_length:
             source_event = source_event[:available_length - 3].rstrip() + "..."
         return [f"{header}{source_event}{limitation}{hashtags}"], [], None
+
+    @staticmethod
+    def _source_excerpt(source_context: Optional[str], max_chars: int) -> Optional[str]:
+        if not source_context or not source_context.strip():
+            return None
+        sentences = re.findall(r"[^.!?]+(?:[.!?]+|$)", source_context.strip())
+        selected: list[str] = []
+        for sentence in sentences[:2]:
+            candidate = " ".join((*selected, sentence.strip()))
+            if len(candidate) > max_chars:
+                break
+            selected.append(sentence.strip())
+        return " ".join(selected) or None
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Return a fully validated generation or a factual source-only fallback."""
