@@ -88,6 +88,7 @@ def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
         (None, None, False),
         ("", "Kars Antlaşması", False),
         ("Roma İmparatorluğu hakkında bir özet.", "Kars Antlaşması", False),
+        (("Kars Antlaşması " + "ayrıntı " * 80 + "."), "Kars Antlaşması", False),
         (("Kars Antlaşması 1921'de imzalandı. " * 200), "Kars Antlaşması", True),
     ],
 )
