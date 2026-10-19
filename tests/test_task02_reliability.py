@@ -190,7 +190,7 @@ async def test_invalid_kars_generation_uses_curated_source_fallback(monkeypatch:
     assert "Türk Kurtuluş Savaşı sona erdi" not in combined_text
     assert "Kars'ta imzalandı" in combined_text
     assert "Batı Cephesi" in combined_text
-    assert service.prompt_version == "event-rewrite-v2+fact-guard-v2"
+    assert service.prompt_version == "event-rewrite-v3+fact-guard-v3"
     assert service.last_generation_type == "source_fallback:unsupported_signing_location,unsupported_war_scope"
     assert service.last_source_id == "ttk-library-541556+ttk-istiklal-harbi"
     assert "kutuphane.ttk.gov.tr" in service.last_source_url

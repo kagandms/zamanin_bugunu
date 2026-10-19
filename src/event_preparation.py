@@ -16,7 +16,6 @@ from src.services.content_guard import EventRewriteRequest
 from src.services.content_service import ContentService
 from src.services.image_service import ImageService
 
-THREADS_FOOTER = "Resmi tarihin ötesini, arşiv belgelerini ve unutulan kırılma anlarını her gün keşfetmek için takip edin 👉 @zamaninbugunu"
 TELEGRAM_FOOTER = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
 
 
@@ -133,7 +132,7 @@ async def prepare_event(services: PreparationServices, history: HistoryRepositor
     image = PreparedImage(url, await services.image.download_image(url), image_source)
     blocks = tuple(block if len(block) <= settings.MAX_THREAD_LENGTH else
         block[:settings.MAX_THREAD_LENGTH - 3] + "..." for block in rewrite.blocks)[:3]
-    threads = blocks + (THREADS_FOOTER,)
+    threads = blocks
     metadata = _metadata(rewrite, services.ai, image)
     metadata = replace(metadata, published_text="\n\n".join(threads))
     candidate = rewrite.candidate

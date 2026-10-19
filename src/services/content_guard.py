@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-CONTENT_GUARD_VERSION = "fact-guard-v2"
+CONTENT_GUARD_VERSION = "fact-guard-v3"
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
+II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
+II_KOSOVO_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Kosova_Muharebesi"
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class EventFactProfile:
     facts: tuple[str, ...]
     event_years: tuple[str, ...]
     context_years: tuple[str, ...]
+    fallback_context: tuple[str, ...] = ()
 
 
 def normalize_fact_text(text: str) -> str:
@@ -42,7 +45,7 @@ def resolve_fact_profile(request: EventRewriteRequest) -> Optional[EventFactProf
     has_kars_treaty = "kars antlasmas" in source_text or "kars muahedenames" in source_text
     has_1921 = "1921" in source_text or request.year == "1921"
     if not has_kars_treaty or not has_1921:
-        return None
+        return _resolve_ii_kosovo_profile(request)
     return EventFactProfile(
         profile_id="kars-treaty-1921",
         source_id="ttk-library-541556+ttk-istiklal-harbi",
@@ -54,6 +57,30 @@ def resolve_fact_profile(request: EventRewriteRequest) -> Optional[EventFactProf
         ),
         event_years=("1921",),
         context_years=("1922",),
+    )
+
+
+def _resolve_ii_kosovo_profile(request: EventRewriteRequest) -> Optional[EventFactProfile]:
+    source_url = (request.source_url or "").rstrip("/")
+    source_text = normalize_fact_text(request.original_text)
+    is_ii_murad_source = source_url == II_MURAD_SOURCE_URL
+    mentions_kosovo = "kosova" in source_text
+    if not (is_ii_murad_source and mentions_kosovo and request.year == "1448"):
+        return None
+    return EventFactProfile(
+        profile_id="ii-kosovo-1448",
+        source_id="tr-wikipedia-II-Murad+II-Kosova-Muharebesi",
+        source_url=II_KOSOVO_SOURCE_URL,
+        facts=(
+            "II. Kosova Muharebesi'nde 19 Ekim sabahı son barikatlar aşıldı ve savaş kesin Osmanlı zaferiyle sonuçlandı.",
+            "Kaynak, yenilginin Balkanlar'ı geri alma girişimlerini uzun süre durdurduğunu ve İstanbul'a batıdan gelebilecek askerî tehdidi azalttığını belirtiyor.",
+        ),
+        event_years=("1448",),
+        context_years=(),
+        fallback_context=(
+            "II. Murad'ın yönettiği II. Kosova Muharebesi'nde son barikatlar aşıldı; savaş kesin Osmanlı zaferiyle sonuçlandı.",
+            "Kaynağa göre bu yenilgi, Balkanlar'ı geri alma girişimlerini uzun süre durdurdu; batıdan İstanbul'a gelebilecek askerî tehdit de azaldı.",
+        ),
     )
 
 
