@@ -74,7 +74,7 @@ async def test_generation_failure_uses_curated_ii_kosovo_context(
 
 
 @pytest.mark.asyncio
-async def test_unprofiled_generation_fallback_states_missing_context_in_one_part(
+async def test_unprofiled_fallback_scopes_missing_context_note_to_page_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -92,7 +92,7 @@ async def test_unprofiled_generation_fallback_states_missing_context_in_one_part
     parts, _, _ = await service.rewrite_event_safe(request)
 
     assert len(parts) == 1
-    assert "Kaynakta ek tarihsel bağlam doğrulanamadı." in parts[0]
+    assert "Bu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı." in parts[0]
     assert service.last_generation_type.endswith(":thin_source")
     assert service.last_source_fact_status == "not_checked"
 
@@ -141,7 +141,7 @@ async def test_generic_follow_call_is_not_a_second_threads_part() -> None:
         last_language_format_status = "passed"
         last_source_id = "curated-test-source"
         last_source_url = TDV_MURAD_II_SOURCE_URL
-        prompt_version = "event-rewrite-v4+fact-guard-v4"
+        prompt_version = "event-rewrite-v4+fact-guard-v5"
 
         async def rewrite_event_safe(
             self, request: EventRewriteRequest

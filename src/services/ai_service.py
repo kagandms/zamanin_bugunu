@@ -274,9 +274,11 @@ class AIService:
 
     async def rewrite_event(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Generate and validate a complete post before any platform publishes it."""
+        profile = resolve_fact_profile(request)
+        if profile is None:
+            raise ValueError("unprofiled_claims_unverified")
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
-        profile = resolve_fact_profile(request)
         source_context = request.source_context if has_relevant_source_context(request) else None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
@@ -396,8 +398,9 @@ class AIService:
             "sayı, tarih, alıntı, neden veya taraf ekleme. "
             "Bir cepheye ait sonucu savaşın tamamına genelleme. Çarpıcı ama karşı iddia uydurmayan bir anlatım kullan. "
             "İlk bölüm olayı kısa ve doğru anlatsın. İkinci bölümü yalnız kaynakta veya doğrulanmış olgularda bulunan tarihsel bağlam veya sonuç "
-            "ekliyorsa üret; gerekirse doğal bir soru ekle. Bağlam yoksa tek bölüm üret ve eksik doğrulamayı açıkça "
-            "belirt. Genel takip çağrısı veya başka bir tanıtım metnini ayrı bölüm yapma. Bölümleri --- ile ayır; "
+            "ekliyorsa üret; gerekirse doğal bir soru ekle. Kaynakta neyin bulunmadığına veya tarih başlığının kaynağına "
+            "ilişkin açıklama yapma; tarih başlığı uygulama tarafından olay listesinden sağlanır ve bağlantılı sayfa özetiyle "
+            "aynı kanıt değildir. Tarihi sembolik olarak niteleme. Genel takip çağrısı veya başka bir tanıtım metnini ayrı bölüm yapma. Bölümleri --- ile ayır; "
             "HTML veya açıklama ekleme. GORSEL_PROMPT yalnız kaynakça desteklenen görsel ayrıntılarını içerebilir.\n"
             f"Tarih başlığı: 🕊️ Tarihte Bugün ({request.formatted_date})\n"
             f"Doğrulanmış olay olguları:\n{fact_context or '- Ek doğrulanmış olgu sağlanmadı.'}"
@@ -446,7 +449,7 @@ class AIService:
             context_part = f"{context_prefix}{source_excerpt}"
             self.last_generation_type = f"source_fallback:{reason}:source_context"
             return [main_part, context_part], [], None
-        limitation = "\n\nKaynakta ek tarihsel bağlam doğrulanamadı."
+        limitation = "\n\nBu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı."
         hashtags = "\n\n#tarih #tarihteneoldu"
         available_length = settings.MAX_THREAD_LENGTH - len(header + limitation + hashtags)
         if len(source_event) > available_length:
@@ -468,6 +471,13 @@ class AIService:
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Return a fully validated generation or a factual source-only fallback."""
+        if resolve_fact_profile(request) is None:
+            reason = "unprofiled_claims_unverified"
+            self.last_generation_model = None
+            self.last_validation_reason = reason
+            self.last_source_fact_status = "not_checked"
+            return self.generate_source_fallback(request, reason)
+
         reason = "model_generation_failed"
         try:
             result = await self.rewrite_event(request)

@@ -5,7 +5,7 @@ import pytest
 from src.core.config import Settings
 from src.event_preparation import _rewrite_request
 from src.services.ai_service import AIService
-from src.services.content_guard import EventRewriteRequest, validate_event_content
+from src.services.content_guard import EventRewriteRequest, resolve_fact_profile, validate_event_content
 from src.services.content_service import ContentService
 
 
@@ -67,7 +67,7 @@ def test_unprofiled_generation_rejects_year_absent_from_source_evidence() -> Non
 
     reasons = validate_event_content(["Olay 1923 yılında yaşandı."], request, None)
 
-    assert reasons == ("unsupported_year",)
+    assert reasons == ("unprofiled_claims_unverified", "unsupported_year")
 
 
 def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
@@ -78,7 +78,145 @@ def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
         source_context="Kars Antlaşması 1923 yılında imzalandı.",
     )
 
-    assert validate_event_content(["Antlaşma 1923 yılında imzalandı."], request, None) == ()
+    assert validate_event_content(["Antlaşma 1923 yılında imzalandı."], request, None) == (
+        "unprofiled_claims_unverified",
+    )
+
+
+def test_published_burak_claims_are_not_accepted_without_a_fact_profile() -> None:
+    request = EventRewriteRequest(
+        "Burak Güven, Türk bas gitarist, şarkı sözü yazarı ve Mor ve Ötesi grubu üyesi",
+        "19.10.1975",
+        "1975",
+        "Burak Güven",
+        "https://tr.wikipedia.org/wiki/Burak_G%C3%BCven",
+        "Burak Güven, Mor ve Ötesi grubu üyesidir.",
+    )
+    published_candidate = [
+        "Burak Güven, Mor ve Ötesi grubunun founding üyesi olarak yer alır. "
+        "Gruba katkıları alternatif rock alanında önemli bir yer tutar.",
+        "Not: Gün ve ay (19.10) doğrudan kaynakta yer almamaktadır; tarih sembolik kullanılmıştır.",
+    ]
+
+    reasons = validate_event_content(published_candidate, request, resolve_fact_profile(request))
+
+    assert reasons == ("unprofiled_claims_unverified",)
+
+
+def test_profiled_output_rejects_model_authored_source_absence_note() -> None:
+    request = EventRewriteRequest(
+        "II. Kosova Muharebesi gerçekleşti.",
+        "19.10.1448",
+        "1448",
+        "II. Murad",
+        "https://tr.wikipedia.org/wiki/II._Murad",
+    )
+    profile = resolve_fact_profile(request)
+
+    reasons = validate_event_content(
+        ["Kaynakta gün ve ay bulunmadığı için 19.10 tarihi sembolik kullanıldı."], request, profile
+    )
+
+    assert reasons == ("unverified_source_commentary",)
+
+
+@pytest.mark.asyncio
+async def test_unprofiled_burak_output_uses_source_fallback_without_calling_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.services.ai_service.settings",
+        Settings(OPENROUTER_API_KEY="test-key", MAX_THREAD_LENGTH=500),
+    )
+    service = AIService()
+
+    async def unexpected_model_call(request: EventRewriteRequest) -> tuple[list[str], list[str], None]:
+        raise AssertionError("unprofiled claims cannot be accepted from a model")
+
+    service.rewrite_event = unexpected_model_call
+    request = EventRewriteRequest(
+        original_text=(
+            "Burak Güven, Türk bas gitarist, şarkı sözü yazarı ve Mor ve Ötesi grubu üyesi"
+        ),
+        formatted_date="19.10.1975",
+        year="1975",
+        source_title="Burak Güven",
+        source_url="https://tr.wikipedia.org/wiki/Burak_G%C3%BCven",
+        source_context=(
+            "Burak Güven (19 Ekim 1975, İstanbul), Türk bas gitarist, şarkı sözü yazarı, "
+            "geri vokal/vokal ve Mor ve Ötesi grubu üyesidir."
+        ),
+    )
+
+    parts, _, _ = await service.rewrite_event_safe(request)
+
+    rendered = "\n".join(parts)
+    assert "19.10.1975" in rendered
+    assert "Kaynak özeti: Burak Güven (19 Ekim 1975" in rendered
+    assert "founding" not in rendered.casefold()
+    assert "önemli bir yer" not in rendered.casefold()
+    assert "sembolik" not in rendered.casefold()
+    assert "doğrudan kaynakta yer almamaktadır" not in rendered.casefold()
+    assert service.last_generation_type == "source_fallback:unprofiled_claims_unverified:source_context"
+    assert service.last_source_fact_status == "not_checked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_context", "expected_context"),
+    [
+        ("Burak Güven, Mor ve Ötesi'nin kurucu üyelerindendir.", "kurucu üyelerindendir"),
+        ("Burak Güven, Mor ve Ötesi grubu üyesidir.", "grubu üyesidir"),
+    ],
+)
+async def test_unprofiled_fallback_preserves_source_supported_member_distinction(
+    monkeypatch: pytest.MonkeyPatch,
+    source_context: str,
+    expected_context: str,
+) -> None:
+    monkeypatch.setattr(
+        "src.services.ai_service.settings",
+        Settings(OPENROUTER_API_KEY="test-key", MAX_THREAD_LENGTH=500),
+    )
+    service = AIService()
+    request = EventRewriteRequest(
+        "Burak Güven, Mor ve Ötesi grubu üyesi.",
+        "19.10.1975",
+        "1975",
+        "Burak Güven",
+        "https://tr.wikipedia.org/wiki/Burak_G%C3%BCven",
+        source_context,
+    )
+
+    parts, _, _ = await service.rewrite_event_safe(request)
+
+    assert expected_context in "\n".join(parts)
+
+
+@pytest.mark.asyncio
+async def test_year_only_extract_does_not_make_event_list_date_symbolic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.services.ai_service.settings",
+        Settings(OPENROUTER_API_KEY="test-key", MAX_THREAD_LENGTH=500),
+    )
+    service = AIService()
+    request = EventRewriteRequest(
+        "Burak Güven, Mor ve Ötesi grubu üyesi.",
+        "19.10.1975",
+        "1975",
+        "Burak Güven",
+        source_context="Burak Güven 1975 yılında doğdu.",
+    )
+
+    parts, _, _ = await service.rewrite_event_safe(request)
+
+    rendered = "\n".join(parts)
+    assert "19.10.1975" in rendered
+    assert "sembolik" not in rendered.casefold()
+    assert "gün ve ay" not in rendered.casefold()
+    assert "kaynakta yer almamaktadır" not in rendered.casefold()
 
 
 @pytest.mark.asyncio
@@ -122,5 +260,5 @@ async def test_fallback_uses_only_relevant_bounded_source_context(
         assert service.last_generation_type.endswith(":source_context")
         return
     assert len(parts) == 1
-    assert "Kaynakta ek tarihsel bağlam doğrulanamadı." in parts[0]
+    assert "Bu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı." in parts[0]
     assert service.last_generation_type.endswith(":thin_source")
