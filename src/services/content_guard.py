@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-CONTENT_GUARD_VERSION = "fact-guard-v4"
+CONTENT_GUARD_VERSION = "fact-guard-v5"
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
 II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
@@ -95,10 +95,12 @@ def validate_event_content(
 ) -> tuple[str, ...]:
     """Reject known source contradictions without treating keywords as global bans."""
     if profile is None:
-        return _validate_unprofiled_years(parts, request)
+        return ("unprofiled_claims_unverified", *_validate_unprofiled_years(parts, request))
 
     normalized = normalize_fact_text("\n".join(parts))
     reasons: list[str] = []
+    if _claims_unverified_source_absence(normalized):
+        reasons.append("unverified_source_commentary")
     if _claims_moscow_as_kars_signing_place(normalized):
         reasons.append("unsupported_signing_location")
     if _claims_unsupported_georgian_border_change(normalized):
@@ -108,6 +110,15 @@ def validate_event_content(
     if _contains_unsupported_year(normalized, profile):
         reasons.append("unsupported_year")
     return tuple(reasons)
+
+
+def _claims_unverified_source_absence(normalized_text: str) -> bool:
+    if "sembolik" in normalized_text:
+        return True
+    return re.search(
+        r"kaynak.{0,100}(?:yok|bulunm|yer alm|belirtm|icer(?:m|i)|aktar(?:m|i))",
+        normalized_text,
+    ) is not None
 
 
 def has_relevant_source_context(request: EventRewriteRequest) -> bool:

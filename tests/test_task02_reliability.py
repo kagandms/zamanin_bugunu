@@ -163,12 +163,14 @@ def test_unprofiled_event_source_facts_are_explicitly_not_checked() -> None:
     assert get_source_fact_status(profile) == "not_checked"
 
 
-def test_moscow_is_not_a_global_banned_word() -> None:
+def test_unprofiled_moscow_claim_is_not_treated_as_verified() -> None:
     request = EventRewriteRequest("Moskova Antlaşması imzalandı.", "16.03.1921", "1921")
     profile = resolve_fact_profile(request)
 
     assert profile is None
-    assert validate_event_content(["Moskova Antlaşması imzalandı."], request, profile) == ()
+    assert validate_event_content(["Moskova Antlaşması imzalandı."], request, profile) == (
+        "unprofiled_claims_unverified",
+    )
 
 
 @pytest.mark.asyncio
@@ -190,7 +192,7 @@ async def test_invalid_kars_generation_uses_curated_source_fallback(monkeypatch:
     assert "Türk Kurtuluş Savaşı sona erdi" not in combined_text
     assert "Kars'ta imzalandı" in combined_text
     assert "Batı Cephesi" in combined_text
-    assert service.prompt_version == "event-rewrite-v4+fact-guard-v4"
+    assert service.prompt_version == "event-rewrite-v4+fact-guard-v5"
     assert service.last_generation_type == "source_fallback:unsupported_signing_location,unsupported_war_scope"
     assert service.last_source_id == "ttk-library-541556+ttk-istiklal-harbi"
     assert "kutuphane.ttk.gov.tr" in service.last_source_url
@@ -265,20 +267,9 @@ async def test_unprofiled_ai_metadata_does_not_claim_source_facts_were_checked(
         LAST_RESORT_MODEL="last-model",
     ))
 
-    class Response:
-        status_code = 200
-
-        @staticmethod
-        def json() -> dict[str, object]:
-            return {
-                "model": "mock-model",
-                "choices": [{"message": {"content": (
-                    "🕊️ Tarihte Bugün (16.03.1921)\nBugün önemli bir olay yaşandı.\n"
-                    "---\nBu olay Türkiye ve dünya tarihinde iz bıraktı."
-                )}}],
-            }
-
     class Client:
+        called = False
+
         def __init__(self, **kwargs: object) -> None:
             pass
 
@@ -288,16 +279,18 @@ async def test_unprofiled_ai_metadata_does_not_claim_source_facts_were_checked(
         async def __aexit__(self, *args: object) -> None:
             return None
 
-        async def post(self, url: str, **kwargs: object) -> Response:
-            return Response()
+        async def post(self, url: str, **kwargs: object) -> object:
+            self.called = True
+            raise AssertionError("unprofiled event should not call a model")
 
     monkeypatch.setattr("src.services.ai_service.httpx.AsyncClient", Client)
     service = AIService()
 
-    await service.rewrite_event(EventRewriteRequest("Moskova Antlaşması imzalandı.", "16.03.1921", "1921"))
+    with pytest.raises(ValueError, match="unprofiled_claims_unverified"):
+        await service.rewrite_event(
+            EventRewriteRequest("Moskova Antlaşması imzalandı.", "16.03.1921", "1921")
+        )
 
-    assert service.last_generation_type == "ai_language_format_only"
-    assert service.last_language_format_status == "passed"
     assert service.last_source_fact_status == "not_checked"
 
 
