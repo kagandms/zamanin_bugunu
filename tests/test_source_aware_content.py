@@ -24,7 +24,7 @@ def test_rewrite_request_carries_bounded_relevant_extract() -> None:
 
     assert request.source_url == "https://tr.wikipedia.org/wiki/Kars"
     assert request.source_context is not None
-    assert len(request.source_context) == 3000
+    assert request.source_context == "Kars Antlaşması 1921'de imzalandı."
 
 
 def test_off_topic_extract_is_removed_before_generation() -> None:
@@ -42,14 +42,15 @@ def test_off_topic_extract_is_removed_before_generation() -> None:
     assert request.source_context is None
 
 
-def test_source_context_score_rewards_more_available_context() -> None:
-    sparse = {"pages": [{"extract": "Kısa kayıt."}]}
-    rich = {"pages": [{
-        "extract": ("Birinci bağlam. İkinci sonuç. Üçüncü ayrıntı. " * 20),
-        "description": "Tarihsel olay",
+def test_source_context_score_ignores_unrelated_long_extracts() -> None:
+    event = "Kars Antlaşması imzalandı."
+    short = {"text": event, "pages": [{"title": "Fransızlar", "extract": "Kısa kayıt."}]}
+    long = {"text": event, "pages": [{
+        "title": "Fransızlar", "extract": "Kars Antlaşması " + "ayrıntı " * 200 + ".",
     }]}
 
-    assert ContentService._source_context_score(rich) > ContentService._source_context_score(sparse)
+    assert ContentService._source_context_score(long) == 0
+    assert ContentService._source_context_score(short) == 0
 
 
 def test_popularity_bonus_is_capped_at_thirty() -> None:
@@ -70,7 +71,7 @@ def test_unprofiled_generation_rejects_year_absent_from_source_evidence() -> Non
     assert reasons == ("unprofiled_claims_unverified", "unsupported_year")
 
 
-def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
+def test_unprofiled_generation_rejects_source_year_when_event_year_is_unknown() -> None:
     request = EventRewriteRequest(
         original_text="Kars Antlaşması imzalandı.",
         formatted_date="19.10",
@@ -79,7 +80,7 @@ def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
     )
 
     assert validate_event_content(["Antlaşma 1923 yılında imzalandı."], request, None) == (
-        "unprofiled_claims_unverified",
+        "unprofiled_claims_unverified", "unsupported_year",
     )
 
 
@@ -227,7 +228,7 @@ async def test_year_only_extract_does_not_make_event_list_date_symbolic(
         ("", "Kars Antlaşması", False),
         ("Roma İmparatorluğu hakkında bir özet.", "Kars Antlaşması", False),
         (("Kars Antlaşması " + "ayrıntı " * 80 + "."), "Kars Antlaşması", False),
-        (("Kars Antlaşması 1921'de imzalandı. " * 200), "Kars Antlaşması", True),
+        (("Kars Antlaşması 1921'de imzalandı. " * 200), "Kars Antlaşması", False),
     ],
 )
 async def test_fallback_uses_only_relevant_bounded_source_context(
@@ -260,5 +261,5 @@ async def test_fallback_uses_only_relevant_bounded_source_context(
         assert service.last_generation_type.endswith(":source_context")
         return
     assert len(parts) == 1
-    assert "Bu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı." in parts[0]
+    assert "Bu paylaşımda" not in parts[0]
     assert service.last_generation_type.endswith(":thin_source")
