@@ -12,8 +12,9 @@ from src.core.logger import logger
 from src.data.models import EventReservation, PostMetadata
 from src.data.repository import HistoryRepository
 from src.services.ai_service import AIService
-from src.services.content_guard import EventRewriteRequest, has_relevant_source_context
+from src.services.content_guard import EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile
 from src.services.content_service import ContentService
+from src.services.source_context import select_event_source
 from src.services.image_service import ImageService
 
 TELEGRAM_FOOTER = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
@@ -53,22 +54,31 @@ def _first_page(candidate: dict[str, object]) -> dict[str, object]:
 
 
 def _source_url(candidate: dict[str, object]) -> str | None:
-    return ((_first_page(candidate).get("content_urls") or {}).get("desktop") or {}).get("page")
+    source = select_event_source(candidate)
+    return source.url if source else None
 
 
 def _rewrite_request(candidate: dict[str, object], observed: datetime) -> EventRewriteRequest:
     year = candidate.get("year")
-    page = _first_page(candidate)
-    extract = page.get("extract")
-    source_context = extract[:3000].strip() if isinstance(extract, str) and extract.strip() else None
-    request = EventRewriteRequest(original_text=candidate["text"],
+    request = EventRewriteRequest(
+        original_text=candidate["text"],
         formatted_date=f"{observed.day}.{observed.month}" + (f".{year}" if year else ""),
         year=str(year) if year is not None else None,
-        source_title=(page.get("titles") or {}).get("canonical") or page.get("title"),
-        source_url=_source_url(candidate), source_context=source_context)
-    if has_relevant_source_context(request):
-        return request
-    return replace(request, source_context=None)
+        linked_titles=tuple(
+            str((page.get("titles") or {}).get("canonical") or page.get("title") or "")
+            for page in candidate.get("pages") or []
+        ),
+    )
+    # Curated profiles retain their explicit source identity even without a usable extract.
+    for page in candidate.get("pages") or []:
+        url = ((page.get("content_urls") or {}).get("desktop") or {}).get("page")
+        profiled = replace(request, source_title=page.get("title"), source_url=url,
+                           source_context=page.get("extract"))
+        if resolve_fact_profile(profiled):
+            return replace(profiled, source_context=" ".join(get_relevant_source_sentences(profiled)) or None)
+    source = select_event_source(candidate)
+    return replace(request, source_title=source.title, source_url=source.url,
+                   source_context=source.context) if source else request
 
 
 async def _select_event(services: PreparationServices, history: HistoryRepository,
@@ -115,8 +125,8 @@ def _image_size(filename: str | None) -> int | None:
 
 
 def _metadata(rewrite: EventRewrite, ai: AIService, image: PreparedImage) -> PostMetadata:
-    page = _first_page(rewrite.candidate)
-    source_id = ai.last_source_id or page.get("pageid") or page.get("title")
+    source = select_event_source(rewrite.candidate)
+    source_id = ai.last_source_id or (source.title if source else None)
     year = rewrite.candidate.get("year")
     return PostMetadata(event_year=str(year) if year is not None else None,
         source_url=ai.last_source_url or _source_url(rewrite.candidate),

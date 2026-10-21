@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from src.core.logger import logger
 from src.core.config import settings
 from typing import Optional, List, Tuple
+from src.services.source_context import select_event_source
 
 TOPIC_KEYWORDS = {
     "SIYASET": [
@@ -148,16 +149,6 @@ class ContentService:
                 score += 5
                 break
 
-        # 6. Has extract (longer = more notable)
-        for page in pages:
-            extract = page.get('extract', '')
-            if len(extract) > 200:
-                score += 15
-            elif len(extract) > 100:
-                score += 8
-            elif len(extract) > 30:
-                score += 3
-
         # 7. Text length bonus — detailed event text = more substance
         text = item.get('text', '')
         if len(text) > 100:
@@ -186,17 +177,11 @@ class ContentService:
     @staticmethod
     def _source_context_score(item: dict) -> int:
         """Prefer candidates whose linked page offers enough context to support richer copy."""
-        pages = item.get('pages', [])
-        extract = pages[0].get('extract', '') if pages else ''
-        if not isinstance(extract, str):
+        source = select_event_source(item)
+        if source is None:
             return 0
-
-        score = sum((8 for threshold in (120, 300, 600) if len(extract) >= threshold))
-        if len(re.findall(r'[.!?]+', extract)) >= 3:
-            score += 8
-        if pages[0].get('description'):
-            score += 3
-        return score
+        score = sum(8 for threshold in (120, 300, 600) if len(source.context) >= threshold)
+        return score + 8 * min(len(re.findall(r"[.!?](?=\s|$)", source.context)), 2)
 
     @staticmethod
     def _popularity_bonus(pageviews: int) -> int:

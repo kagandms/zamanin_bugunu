@@ -6,6 +6,7 @@ from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
     EventRewriteRequest,
     get_source_fact_status,
+    get_relevant_source_sentences,
     has_relevant_source_context,
     resolve_fact_profile,
     validate_event_content,
@@ -279,7 +280,7 @@ class AIService:
             raise ValueError("unprofiled_claims_unverified")
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
-        source_context = request.source_context if has_relevant_source_context(request) else None
+        source_context = " ".join(get_relevant_source_sentences(request)) or None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
         system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
@@ -436,7 +437,8 @@ class AIService:
         self.last_generation_type = f"source_fallback:{reason}:thin_source"
         source_event = request.original_text.strip()
         header = f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n"
-        source_context = request.source_context if has_relevant_source_context(request) else None
+        source_sentences = get_relevant_source_sentences(request)
+        source_context = source_sentences or None
         context_prefix = "Kaynak özeti: "
         source_excerpt = self._source_excerpt(
             source_context, settings.MAX_THREAD_LENGTH - len(context_prefix)
@@ -449,24 +451,21 @@ class AIService:
             context_part = f"{context_prefix}{source_excerpt}"
             self.last_generation_type = f"source_fallback:{reason}:source_context"
             return [main_part, context_part], [], None
-        limitation = "\n\nBu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı."
-        hashtags = "\n\n#tarih #tarihteneoldu"
-        available_length = settings.MAX_THREAD_LENGTH - len(header + limitation + hashtags)
-        if len(source_event) > available_length:
-            source_event = source_event[:available_length - 3].rstrip() + "..."
-        return [f"{header}{source_event}{limitation}{hashtags}"], [], None
+        main_part = f"{header}{source_event}"
+        if len(main_part) > settings.MAX_THREAD_LENGTH:
+            main_part = main_part[:settings.MAX_THREAD_LENGTH - 3].rstrip() + "..."
+        return [main_part], [], None
 
     @staticmethod
-    def _source_excerpt(source_context: Optional[str], max_chars: int) -> Optional[str]:
-        if not source_context or not source_context.strip():
+    def _source_excerpt(source_sentences: Optional[Tuple[str, ...]], max_chars: int) -> Optional[str]:
+        if not source_sentences:
             return None
-        sentences = re.findall(r"[^.!?]+(?:[.!?]+|$)", source_context.strip())
         selected: list[str] = []
-        for sentence in sentences[:2]:
-            candidate = " ".join((*selected, sentence.strip()))
+        for sentence in source_sentences[:2]:
+            candidate = " ".join((*selected, sentence))
             if len(candidate) > max_chars:
                 break
-            selected.append(sentence.strip())
+            selected.append(sentence)
         return " ".join(selected) or None
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:

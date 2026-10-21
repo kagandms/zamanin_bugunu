@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
+from src.services.source_context import (
+    SourceContextInput, normalize_fact_text, relevant_source_sentences,
+)
 
-CONTENT_GUARD_VERSION = "fact-guard-v5"
+
+CONTENT_GUARD_VERSION = "fact-guard-v6"
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
 II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
@@ -21,6 +24,7 @@ class EventRewriteRequest:
     source_title: Optional[str] = None
     source_url: Optional[str] = None
     source_context: Optional[str] = None
+    linked_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -32,12 +36,6 @@ class EventFactProfile:
     event_years: tuple[str, ...]
     context_years: tuple[str, ...]
     fallback_context: tuple[str, ...] = ()
-
-
-def normalize_fact_text(text: str) -> str:
-    """Normalize Turkish text for deterministic, accent-insensitive checks."""
-    decomposed = unicodedata.normalize("NFKD", text.casefold().replace("ı", "i"))
-    return "".join(character for character in decomposed if not unicodedata.combining(character))
 
 
 def resolve_fact_profile(request: EventRewriteRequest) -> Optional[EventFactProfile]:
@@ -121,41 +119,16 @@ def _claims_unverified_source_absence(normalized_text: str) -> bool:
     ) is not None
 
 
+def get_relevant_source_sentences(request: EventRewriteRequest) -> tuple[str, ...]:
+    """Filter complete source sentences against the event identity and relationship."""
+    return relevant_source_sentences(SourceContextInput(
+        request.original_text, request.year, request.source_title, request.source_context, request.linked_titles,
+    ))
+
+
 def has_relevant_source_context(request: EventRewriteRequest) -> bool:
-    """Accept a linked extract only when its title or event anchors match the event."""
-    if not request.source_context or not request.source_context.strip():
-        return False
-
-    context = _source_terms(request.source_context)
-    title = _source_terms(request.source_title or "")
-    if title and title.issubset(context):
-        return True
-
-    event = _source_terms(request.original_text)
-    return len(_matching_source_terms(event, context)) >= 2
-
-
-def _source_terms(text: str) -> set[str]:
-    normalized = normalize_fact_text(text)
-    return {
-        term for term in re.findall(r"[a-z0-9]+", normalized)
-        if len(term) >= 5 and term not in _SOURCE_CONTEXT_STOPWORDS
-    }
-
-
-def _matching_source_terms(event_terms: set[str], context_terms: set[str]) -> set[str]:
-    return {
-        event_term for event_term in event_terms
-        if any(_terms_share_stem(event_term, context_term) for context_term in context_terms)
-    }
-
-
-def _terms_share_stem(left: str, right: str) -> bool:
-    shorter, longer = sorted((left, right), key=len)
-    return shorter == longer or (len(shorter) >= 5 and longer.startswith(shorter[:5]))
-
-
-_SOURCE_CONTEXT_STOPWORDS = {"ancak", "olarak", "sonra", "bunun", "birçok", "daha", "kadar"}
+    """Require evidence in the sentences used, rather than a page-title self-match."""
+    return bool(get_relevant_source_sentences(request))
 
 
 def _validate_unprofiled_years(parts: list[str], request: EventRewriteRequest) -> tuple[str, ...]:

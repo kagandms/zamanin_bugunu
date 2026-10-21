@@ -74,7 +74,7 @@ async def test_generation_failure_uses_curated_ii_kosovo_context(
 
 
 @pytest.mark.asyncio
-async def test_unprofiled_fallback_scopes_missing_context_note_to_page_summary(
+async def test_unprofiled_fallback_uses_only_the_original_event_without_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -92,7 +92,8 @@ async def test_unprofiled_fallback_scopes_missing_context_note_to_page_summary(
     parts, _, _ = await service.rewrite_event_safe(request)
 
     assert len(parts) == 1
-    assert "Bu paylaşımda bağlantılı sayfa özetinden ek bağlam kullanılamadı." in parts[0]
+    assert parts[0].endswith("Bir karar alındı.")
+    assert "Bu paylaşımda" not in parts[0]
     assert service.last_generation_type.endswith(":thin_source")
     assert service.last_source_fact_status == "not_checked"
 
