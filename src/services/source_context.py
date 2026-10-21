@@ -13,8 +13,11 @@ _EVENT_KINDS = {
 }
 _STOPWORDS = {"bir", "ile", "olan", "olarak", "hakkinda", "bilgi", "silahli", "bu", "ve", "nin", "nda"}
 _MONTHS = {"ocak", "subat", "mart", "nisan", "mayis", "haziran", "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik"}
-_FACT_STEMS = ("imzala", "durdur", "belirle", "duzenle", "gercekles", "yapil", "kurul", "yenil", "kazan", "karar", "cekil")
+_FACT_STEMS = ("imzala", "durdur", "belirle", "duzenle", "gercekles", "yapil", "kurul", "yenil", "kazan", "karar", "cekil", "kesinles")
 _BIO_STEMS = ("dog", "oldu", "uye", "gitarist", "vokal", "sair", "yazar", "besteci", "sanatci")
+_OCCURRENCE_STEMS = ("imzala", "basla", "gercekles", "duzenle", "yapil", "saldir", "catis", "muhareb")
+_OUTCOME_STEMS = ("ardindan", "sonras", "sonuc", "etki", "yolac", "sagla", "kesinles", "sonaer", "surdu")
+_YEAR_PATTERN = r"\b[1-9][0-9]{2,3}\b"
 
 
 @dataclass(frozen=True)
@@ -99,10 +102,41 @@ def _is_event_sentence(sentence: str, evidence: SourceContextInput) -> bool:
         if (all(_matches(anchor, words) for anchor in anchors)
                 and any(_kind(word) == kind for word in words)
                 and _has_fact(words, _FACT_STEMS)):
-            return True
+            return not _has_conflicting_sentence_year(sentence, evidence)
     if identities:
         return False
     return _is_biographical_sentence(words, evidence)
+
+
+def _expected_event_year(evidence: SourceContextInput) -> str | None:
+    if evidence.year and re.fullmatch(_YEAR_PATTERN, evidence.year):
+        return evidence.year
+    years = tuple(dict.fromkeys(re.findall(_YEAR_PATTERN, evidence.event_text)))
+    return years[0] if len(years) == 1 else None
+
+
+def _has_conflicting_title_year(title: str, evidence: SourceContextInput) -> bool:
+    title_years = set(re.findall(_YEAR_PATTERN, title))
+    expected_year = _expected_event_year(evidence)
+    return bool(title_years and (expected_year is None or expected_year not in title_years))
+
+
+def _has_conflicting_sentence_year(sentence: str, evidence: SourceContextInput) -> bool:
+    sentence_years = set(re.findall(_YEAR_PATTERN, sentence))
+    expected_year = _expected_event_year(evidence)
+    if not sentence_years:
+        return False
+    if expected_year is None:
+        return True
+    conflicting_years = sentence_years - {expected_year}
+    if not conflicting_years:
+        return False
+    words = _words(sentence)
+    has_occurrence = _has_fact(words, _OCCURRENCE_STEMS)
+    has_outcome = _has_fact(words, _OUTCOME_STEMS)
+    if has_outcome and not has_occurrence:
+        return False
+    return True
 
 
 def _is_biographical_sentence(words: list[str], evidence: SourceContextInput) -> bool:
@@ -126,6 +160,8 @@ def _read_page(page: Mapping[str, object], event: SourceContextInput) -> Selecte
     title = (page.get("titles") or {}).get("canonical") or page.get("title")
     extract = page.get("extract")
     if not isinstance(title, str) or not isinstance(extract, str):
+        return None
+    if _has_conflicting_title_year(title, event):
         return None
     evidence = SourceContextInput(event.event_text, event.year, title, extract, event.linked_titles)
     sentences = relevant_source_sentences(evidence)

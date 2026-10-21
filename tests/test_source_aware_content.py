@@ -71,7 +71,7 @@ def test_unprofiled_generation_rejects_year_absent_from_source_evidence() -> Non
     assert reasons == ("unprofiled_claims_unverified", "unsupported_year")
 
 
-def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
+def test_unprofiled_generation_rejects_source_year_when_event_year_is_unknown() -> None:
     request = EventRewriteRequest(
         original_text="Kars Antlaşması imzalandı.",
         formatted_date="19.10",
@@ -80,7 +80,7 @@ def test_unprofiled_generation_accepts_year_from_relevant_extract() -> None:
     )
 
     assert validate_event_content(["Antlaşma 1923 yılında imzalandı."], request, None) == (
-        "unprofiled_claims_unverified",
+        "unprofiled_claims_unverified", "unsupported_year",
     )
 
 
@@ -228,7 +228,7 @@ async def test_year_only_extract_does_not_make_event_list_date_symbolic(
         ("", "Kars Antlaşması", False),
         ("Roma İmparatorluğu hakkında bir özet.", "Kars Antlaşması", False),
         (("Kars Antlaşması " + "ayrıntı " * 80 + "."), "Kars Antlaşması", False),
-        (("Kars Antlaşması 1921'de imzalandı. " * 200), "Kars Antlaşması", True),
+        (("Kars Antlaşması 1921'de imzalandı. " * 200), "Kars Antlaşması", False),
     ],
 )
 async def test_fallback_uses_only_relevant_bounded_source_context(

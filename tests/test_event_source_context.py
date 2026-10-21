@@ -48,8 +48,9 @@ def page(title: str, extract: str) -> dict[str, object]:
             "content_urls": {"desktop": {"page": f"https://example.test/{title}"}}}
 
 
-def candidate(event: str, pages: list[dict[str, object]]) -> dict[str, object]:
-    return {"text": event, "year": 1921 if event == ANKARA_EVENT else 2007, "pages": pages}
+def candidate(event: str, pages: list[dict[str, object]], year: int | None = None) -> dict[str, object]:
+    event_year = year if year is not None else (1921 if "Ankara" in event else 2007)
+    return {"text": event, "year": event_year, "pages": pages}
 
 
 @pytest.fixture(autouse=True)
@@ -150,6 +151,52 @@ def test_shared_person_or_country_does_not_validate_a_different_biographical_cla
     request = _rewrite_request(candidate(event, [page("Henry Franklin-Bouillon", page_extract)]), datetime(2026, 10, 20))
 
     assert request.source_context is None
+
+
+@pytest.mark.parametrize(("title", "extract"), [
+    (
+        "Ankara_Antlaşması_(1923)",
+        "Ankara Antlaşması, 1921'de TBMM ile Fransa arasında imzalandı.",
+    ),
+    (
+        "Ankara_Antlaşması_(1921)",
+        "Ankara Antlaşması, 1923'te TBMM ile Fransa arasında imzalandı.",
+    ),
+    (
+        "Ankara Antlaşması",
+        "Ankara Antlaşması, 1923'te taraflar arasında yeni bir karar belirledi.",
+    ),
+    (
+        "Ankara Antlaşması",
+        "Ankara Antlaşması 1921'de imzalandı; 1923'te aynı adla imzalanıp sonuçları değişti.",
+    ),
+])
+@pytest.mark.asyncio
+async def test_explicit_other_year_rejects_same_named_wrong_event(
+    title: str, extract: str,
+) -> None:
+    request = _rewrite_request(
+        candidate("Ankara Antlaşması imzalandı.", [page(title, extract)], year=1921),
+        datetime(2026, 10, 20),
+    )
+
+    parts, _, _ = await AIService().rewrite_event_safe(request)
+
+    assert request.source_context is None
+    assert len(parts) == 1
+    assert "Kaynak özeti:" not in parts[0]
+
+
+def test_different_year_for_a_later_outcome_remains_valid() -> None:
+    result_sentence = (
+        "Ankara Antlaşması'nın ardından güney sınırı 1923'te Lozan Antlaşması ile kesinleşti."
+    )
+    request = _rewrite_request(
+        candidate("Ankara Antlaşması imzalandı.", [page("Ankara_Antlaşması_(1921)", result_sentence)], year=1921),
+        datetime(2026, 10, 20),
+    )
+
+    assert request.source_context == result_sentence
 
 
 @pytest.mark.parametrize("extract", [
