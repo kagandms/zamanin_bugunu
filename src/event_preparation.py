@@ -18,6 +18,8 @@ from src.services.source_context import select_event_source
 from src.services.image_service import ImageService
 
 TELEGRAM_FOOTER = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
+MIN_GENERATED_CONTENT_CHARS = 80
+_DATE_HEADER = re.compile(r"^\s*🕊️\s*Tarihte Bugün\s*\([^)]*\)\s*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,15 @@ def _rewrite_request(candidate: dict[str, object], observed: datetime) -> EventR
                    source_context=source.context) if source else request
 
 
+def _selection_stop_reason(candidates: list[dict[str, object]], used_texts: list[str]) -> tuple[str, int]:
+    used_count = sum(1 for item in candidates if item.get("text") in used_texts)
+    if not candidates:
+        return "no_candidates", used_count
+    if used_count == len(candidates):
+        return "all_candidates_used", used_count
+    return "selector_returned_none", used_count
+
+
 async def _select_event(services: PreparationServices, history: HistoryRepository,
                         observed: datetime) -> EventRewrite:
     candidates = await services.content.fetch_events(observed.month, observed.day)
@@ -88,17 +99,47 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
     for attempt in range(5):
         candidate = await services.content.select_best_event(candidates, used_texts)
         if not candidate:
+            reason, used_count = _selection_stop_reason(candidates, used_texts)
+            logger.warning("Event selection stopped reason={} candidates={} used={}",
+                reason, len(candidates), used_count)
             break
         if await history.exists(candidate["text"]):
+            logger.info("Event candidate rejected reason=already_published attempt={}", attempt + 1)
             used_texts.append(candidate["text"])
             continue
         blocks, _, image_prompt = await services.ai.rewrite_event_safe(_rewrite_request(candidate, observed))
-        if blocks and len("".join(blocks)) >= 80:
+        output_length = sum(len(block) for block in blocks if isinstance(block, str))
+        rejection = _rewrite_rejection(candidate, blocks, services.ai.last_generation_type)
+        if rejection is None:
             logger.info("Prepared candidate={} generation={} validation={}", attempt + 1,
                 services.ai.last_generation_type, services.ai.last_validation_reason)
             return EventRewrite(candidate, tuple(blocks), image_prompt)
+        logger.info("Event candidate rejected reason={} chars={} attempt={}",
+            rejection, output_length, attempt + 1)
         used_texts.append(candidate["text"])
+    else:
+        logger.warning("Event selection stopped reason=attempt_limit candidates={} attempts=5", len(candidates))
     raise RuntimeError("No event candidate passed existing source/fallback guards")
+
+
+def _rewrite_rejection(candidate: dict[str, object], blocks: list[str], generation_type: str | None) -> str | None:
+    if not blocks or not any(isinstance(block, str) and block.strip() for block in blocks):
+        return "empty_output"
+    rendered = "\n".join(block.strip() for block in blocks if isinstance(block, str)).strip()
+    body = _DATE_HEADER.sub("", rendered, count=1).strip()
+    if not body:
+        return "header_only"
+    title_values = {
+        str((page.get("titles") or {}).get("canonical") or page.get("title") or "").strip().casefold()
+        for page in candidate.get("pages") or []
+    }
+    if body.casefold() in title_values or len(body.split()) < 3:
+        return "title_only"
+    if len("".join(blocks)) < MIN_GENERATED_CONTENT_CHARS:
+        if (generation_type or "").startswith("source_fallback:"):
+            return None
+        return "below_minimum_length"
+    return None
 
 
 def _choose_image(rewrite: EventRewrite) -> tuple[str, str]:
