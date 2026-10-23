@@ -1,11 +1,36 @@
+import asyncio
 import httpx
 import random
 import re
+import time
 import unicodedata
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from src.core.logger import logger
 from src.core.config import settings
 from typing import Optional, List, Tuple
+
+
+SOURCE_REQUEST_TIMEOUT_SECONDS = 2.0
+SOURCE_FETCH_BUDGET_SECONDS = 18.0
+SOURCE_MAX_ATTEMPTS = 2
+SOURCE_MAX_RETRY_AFTER_SECONDS = 1.0
+
+
+class ContentSourceFetchError(RuntimeError):
+    """Raised when every event category fails before returning a valid response."""
+
+
+@dataclass(frozen=True)
+class CategoryFetchResult:
+    events: list[dict]
+    succeeded: bool
+    status_code: int | None
+    elapsed_ms: int
+    error_class: str
+    attempts: int
+    retry_after_seconds: float | None = None
 from src.services.source_context import select_event_source
 
 TOPIC_KEYWORDS = {
@@ -228,27 +253,164 @@ class ContentService:
         return 0
 
     async def fetch_events(self, month: int, day: int) -> list:
-        """Fetches events from Wikipedia for the given date."""
+        """Fetch source event data within its own deadline, before downstream preparation."""
         categories = ["selected", "events", "births", "deaths"]
         raw_items = []
-        
-        async with httpx.AsyncClient() as client:
-            client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
-            
-            for cat in categories:
-                url = f"{self.base_url}/{cat}/{month}/{day}"
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        items = data.get(cat, [])
-                        for item in items:
-                            item['_category'] = cat
-                            raw_items.append(item)
-                except Exception as e:
-                    logger.error(f"Failed to fetch {cat}: {e}")
-                    
+        deadline = time.monotonic() + SOURCE_FETCH_BUDGET_SECONDS
+        successful_categories = 0
+        active_category = None
+        active_started = time.monotonic()
+        budget_expired = False
+
+        try:
+            async with asyncio.timeout(SOURCE_FETCH_BUDGET_SECONDS):
+                async with httpx.AsyncClient() as client:
+                    client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
+                    for cat in categories:
+                        active_category = cat
+                        active_started = time.monotonic()
+                        result = await self._fetch_category(client, cat, month, day, deadline)
+                        raw_items.extend(result.events)
+                        successful_categories += int(result.succeeded)
+                        active_category = None
+        except TimeoutError:
+            budget_expired = True
+            if active_category is not None:
+                logger.info("Event source category={} attempt=cancelled status=none elapsed_ms={} candidate_count=0 error_class=preparation_budget_exhausted",
+                            active_category, int((time.monotonic() - active_started) * 1000))
+            logger.info("Event source fetch budget exhausted elapsed_ms={} successful_categories={} candidate_count={}",
+                        int((time.monotonic() - (deadline - SOURCE_FETCH_BUDGET_SECONDS)) * 1000),
+                        successful_categories, len(raw_items))
+        if not successful_categories:
+            if budget_expired:
+                raise ContentSourceFetchError("Source data fetch budget expired before a valid response")
+            raise ContentSourceFetchError("All event categories failed to return valid data")
+        outcome = ("empty" if successful_categories == len(categories) else "empty_partial") if not raw_items else (
+            "partial" if successful_categories < len(categories) else "ok"
+        )
+        logger.info("Event source fetch outcome={} successful_categories={} candidate_count={}",
+                    outcome, successful_categories, len(raw_items))
         return raw_items
+
+    async def _fetch_category(
+        self, client: httpx.AsyncClient, category: str, month: int, day: int, deadline: float
+    ) -> CategoryFetchResult:
+        started = time.monotonic()
+        url = f"{self.base_url}/{category}/{month}/{day}"
+        last_status = None
+        error_class = "retry_budget_exhausted"
+        attempts_made = 0
+        for attempt in range(1, SOURCE_MAX_ATTEMPTS + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                error_class = "preparation_budget_exhausted"
+                break
+            attempts_made = attempt
+            result = await self._request_category(client, url, category, attempt, remaining)
+            last_status = result.status_code
+            error_class = result.error_class
+            self._log_category_attempt(category, attempt, result)
+            if result.succeeded or not self._can_retry(result, attempt, deadline):
+                return self._finish_category(started, last_status, result)
+            await asyncio.sleep(self._retry_delay(result, attempt))
+        logger.info("Event source category={} attempt={} status={} elapsed_ms={} candidate_count=0 error_class={}",
+                    category, attempts_made, last_status if last_status is not None else "none",
+                    int((time.monotonic() - started) * 1000), error_class)
+        return CategoryFetchResult([], False, last_status, int((time.monotonic() - started) * 1000),
+                                   error_class, attempts_made)
+
+    async def _request_category(
+        self, client: httpx.AsyncClient, url: str, category: str, attempt: int, remaining: float
+    ) -> CategoryFetchResult:
+        started = time.monotonic()
+        status_code = None
+        try:
+            response = await client.get(url, timeout=min(SOURCE_REQUEST_TIMEOUT_SECONDS, remaining))
+        except httpx.TimeoutException:
+            return CategoryFetchResult([], False, None, self._elapsed_ms(started), "timeout", attempt)
+        except httpx.RequestError:
+            return CategoryFetchResult([], False, None, self._elapsed_ms(started), "network_error", attempt)
+        status_code = response.status_code
+        if status_code != 200:
+            error_class = self._http_error_class(status_code)
+            retry_after = self._retry_after_seconds(response.headers) if error_class in {"http_429", "http_5xx"} else None
+            return CategoryFetchResult([], False, status_code, self._elapsed_ms(started), error_class,
+                                       attempt, retry_after)
+        try:
+            items = self._decode_category_items(response.json(), category)
+        except ValueError:
+            return CategoryFetchResult([], False, status_code, self._elapsed_ms(started), "invalid_json", attempt)
+        except TypeError:
+            return CategoryFetchResult([], False, status_code, self._elapsed_ms(started), "invalid_schema", attempt)
+        return CategoryFetchResult(items, True, status_code, self._elapsed_ms(started), "none", attempt)
+
+    @staticmethod
+    def _decode_category_items(payload: object, category: str) -> list[dict]:
+        if not isinstance(payload, dict) or not isinstance(payload.get(category), list):
+            raise TypeError("invalid event category schema")
+        items = payload[category]
+        if any(not isinstance(item, dict) or not isinstance(item.get("text"), str) for item in items):
+            raise TypeError("invalid event item schema")
+        return [{**item, "_category": category} for item in items]
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> int:
+        return int((time.monotonic() - started) * 1000)
+
+    @staticmethod
+    def _http_error_class(status_code: int) -> str:
+        if status_code == 429:
+            return "http_429"
+        if 400 <= status_code < 500:
+            return "http_4xx"
+        if 500 <= status_code < 600:
+            return "http_5xx"
+        return "http_other"
+
+    @staticmethod
+    def _log_category_attempt(category: str, attempt: int, result: CategoryFetchResult) -> None:
+        logger.info("Event source category={} attempt={} status={} elapsed_ms={} candidate_count={} error_class={}",
+                    category, attempt, result.status_code if result.status_code is not None else "none",
+                    result.elapsed_ms, len(result.events), result.error_class)
+
+    @staticmethod
+    def _finish_category(started: float, status_code: int | None, result: CategoryFetchResult) -> CategoryFetchResult:
+        return CategoryFetchResult(result.events, result.succeeded, status_code,
+                                   ContentService._elapsed_ms(started), result.error_class, result.attempts)
+
+    @staticmethod
+    def _can_retry(result: CategoryFetchResult, attempt: int, deadline: float) -> bool:
+        is_transient = result.error_class in {"timeout", "network_error", "http_429", "http_5xx"}
+        delay = result.retry_after_seconds
+        if delay is not None and delay > SOURCE_MAX_RETRY_AFTER_SECONDS:
+            return False
+        retry_delay = delay if delay is not None else min(0.25 * attempt, SOURCE_MAX_RETRY_AFTER_SECONDS)
+        return (is_transient and attempt < SOURCE_MAX_ATTEMPTS and
+                deadline - time.monotonic() > retry_delay + SOURCE_REQUEST_TIMEOUT_SECONDS)
+
+    @staticmethod
+    def _retry_delay(result: CategoryFetchResult, attempt: int) -> float:
+        if result.status_code == 429 or (result.status_code is not None and result.status_code >= 500):
+            retry_after = result.retry_after_seconds
+            if retry_after is not None:
+                return retry_after
+        return min(0.25 * attempt, SOURCE_MAX_RETRY_AFTER_SECONDS)
+
+    @staticmethod
+    def _retry_after_seconds(headers: httpx.Headers) -> float | None:
+        value = headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                return None
 
     async def select_best_event(self, items: list, used_texts: list) -> Optional[dict]:
         """
