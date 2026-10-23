@@ -124,10 +124,15 @@ async def test_fetch_events_preserves_partial_success(monkeypatch: pytest.Monkey
 async def test_fetch_events_distinguishes_valid_empty_responses(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeAsyncClient([empty_response(category) for category in CATEGORIES])
     install_client(monkeypatch, client)
-
-    events = await ContentService().fetch_events(10, 22)
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="INFO")
+    try:
+        events = await ContentService().fetch_events(10, 22)
+    finally:
+        logger.remove(sink_id)
 
     assert events == []
+    assert any("outcome=empty successful_categories=4" in record for record in records)
 
 
 @pytest.mark.asyncio
@@ -151,7 +156,7 @@ async def test_fetch_events_classifies_malformed_json_and_schema_without_retry(
     assert len(client.calls) == len(CATEGORIES)
     assert any("category=selected" in record and "error_class=invalid_json" in record for record in records)
     assert any("category=events" in record and "error_class=invalid_schema" in record for record in records)
-    assert any("outcome=empty" in record for record in records)
+    assert any("outcome=empty_partial" in record for record in records)
 
 
 @pytest.mark.asyncio

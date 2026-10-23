@@ -267,7 +267,9 @@ class ContentService:
                 successful_categories += int(result.succeeded)
         if not successful_categories:
             raise ContentSourceFetchError("All event categories failed to return valid data")
-        outcome = "empty" if not raw_items else "partial" if successful_categories < len(categories) else "ok"
+        outcome = ("empty" if successful_categories == len(categories) else "empty_partial") if not raw_items else (
+            "partial" if successful_categories < len(categories) else "ok"
+        )
         logger.info("Event source fetch outcome={} successful_categories={} candidate_count={}",
                     outcome, successful_categories, len(raw_items))
         return raw_items
