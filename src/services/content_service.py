@@ -253,19 +253,37 @@ class ContentService:
         return 0
 
     async def fetch_events(self, month: int, day: int) -> list:
-        """Fetches events from Wikipedia for the given date."""
+        """Fetch source event data within its own deadline, before downstream preparation."""
         categories = ["selected", "events", "births", "deaths"]
         raw_items = []
         deadline = time.monotonic() + SOURCE_FETCH_BUDGET_SECONDS
         successful_categories = 0
+        active_category = None
+        active_started = time.monotonic()
+        budget_expired = False
 
-        async with httpx.AsyncClient() as client:
-            client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
-            for cat in categories:
-                result = await self._fetch_category(client, cat, month, day, deadline)
-                raw_items.extend(result.events)
-                successful_categories += int(result.succeeded)
+        try:
+            async with asyncio.timeout(SOURCE_FETCH_BUDGET_SECONDS):
+                async with httpx.AsyncClient() as client:
+                    client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
+                    for cat in categories:
+                        active_category = cat
+                        active_started = time.monotonic()
+                        result = await self._fetch_category(client, cat, month, day, deadline)
+                        raw_items.extend(result.events)
+                        successful_categories += int(result.succeeded)
+                        active_category = None
+        except TimeoutError:
+            budget_expired = True
+            if active_category is not None:
+                logger.info("Event source category={} attempt=cancelled status=none elapsed_ms={} candidate_count=0 error_class=preparation_budget_exhausted",
+                            active_category, int((time.monotonic() - active_started) * 1000))
+            logger.info("Event source fetch budget exhausted elapsed_ms={} successful_categories={} candidate_count={}",
+                        int((time.monotonic() - (deadline - SOURCE_FETCH_BUDGET_SECONDS)) * 1000),
+                        successful_categories, len(raw_items))
         if not successful_categories:
+            if budget_expired:
+                raise ContentSourceFetchError("Source data fetch budget expired before a valid response")
             raise ContentSourceFetchError("All event categories failed to return valid data")
         outcome = ("empty" if successful_categories == len(categories) else "empty_partial") if not raw_items else (
             "partial" if successful_categories < len(categories) else "ok"
@@ -366,13 +384,13 @@ class ContentService:
         delay = result.retry_after_seconds
         if delay is not None and delay > SOURCE_MAX_RETRY_AFTER_SECONDS:
             return False
-        required_time = delay if delay is not None else min(0.25 * attempt, SOURCE_MAX_RETRY_AFTER_SECONDS)
+        retry_delay = delay if delay is not None else min(0.25 * attempt, SOURCE_MAX_RETRY_AFTER_SECONDS)
         return (is_transient and attempt < SOURCE_MAX_ATTEMPTS and
-                deadline - time.monotonic() > required_time + 0.25)
+                deadline - time.monotonic() > retry_delay + SOURCE_REQUEST_TIMEOUT_SECONDS)
 
     @staticmethod
     def _retry_delay(result: CategoryFetchResult, attempt: int) -> float:
-        if result.status_code == 429:
+        if result.status_code == 429 or (result.status_code is not None and result.status_code >= 500):
             retry_after = result.retry_after_seconds
             if retry_after is not None:
                 return retry_after

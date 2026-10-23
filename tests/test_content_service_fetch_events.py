@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from typing import Any
 from unittest.mock import AsyncMock
@@ -13,6 +14,7 @@ from src.services.content_service import ContentService, ContentSourceFetchError
 
 
 CATEGORIES = ("selected", "events", "births", "deaths")
+HANG = object()
 
 
 class FakeResponse:
@@ -34,6 +36,7 @@ class FakeAsyncClient:
         self.headers: dict[str, str] = {}
         self.responses = deque(responses)
         self.calls: list[tuple[str, float]] = []
+        self.cancelled = False
 
     async def __aenter__(self) -> FakeAsyncClient:
         return self
@@ -44,6 +47,11 @@ class FakeAsyncClient:
     async def get(self, url: str, timeout: float) -> FakeResponse:
         self.calls.append((url.rsplit("/", 3)[-3], timeout))
         response = self.responses.popleft()
+        if response is HANG:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
         if isinstance(response, Exception):
             raise response
         return response
@@ -176,7 +184,7 @@ async def test_fetch_events_does_not_retry_permanent_4xx(monkeypatch: pytest.Mon
 @pytest.mark.asyncio
 async def test_fetch_events_does_not_exceed_retry_after_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeAsyncClient([
-        FakeResponse(429, headers={"Retry-After": "30"}),
+        FakeResponse(503, headers={"Retry-After": "30"}),
         empty_response("events"), empty_response("births"), empty_response("deaths"),
     ])
     install_client(monkeypatch, client)
@@ -185,3 +193,67 @@ async def test_fetch_events_does_not_exceed_retry_after_budget(monkeypatch: pyte
 
     assert events == []
     assert len(client.calls) == len(CATEGORIES)
+
+
+@pytest.mark.asyncio
+async def test_fetch_budget_cancels_a_stalled_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(content_module, "SOURCE_FETCH_BUDGET_SECONDS", 0.02)
+    client = FakeAsyncClient([HANG])
+    install_client(monkeypatch, client)
+
+    started = content_module.time.monotonic()
+    with pytest.raises(ContentSourceFetchError, match="budget expired"):
+        await ContentService().fetch_events(10, 22)
+
+    assert content_module.time.monotonic() - started < 0.5
+    assert client.cancelled
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_budget_preserves_candidates_from_completed_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(content_module, "SOURCE_FETCH_BUDGET_SECONDS", 0.02)
+    candidate = {"text": "An event already received before the deadline."}
+    client = FakeAsyncClient([FakeResponse(200, {"selected": [candidate]}), HANG])
+    install_client(monkeypatch, client)
+
+    events = await ContentService().fetch_events(10, 22)
+
+    assert [event["text"] for event in events] == [candidate["text"]]
+    assert client.cancelled
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_events_honors_short_retry_after_for_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = {"text": "A source-backed event."}
+    client = FakeAsyncClient([
+        FakeResponse(503, headers={"Retry-After": "0.5"}),
+        FakeResponse(200, {"selected": [candidate]}),
+        *[empty_response(category) for category in CATEGORIES[1:]],
+    ])
+    install_client(monkeypatch, client)
+
+    events = await ContentService().fetch_events(10, 22)
+
+    assert len(events) == 1
+    content_module.asyncio.sleep.assert_awaited_once_with(0.5)
+
+
+@pytest.mark.asyncio
+async def test_fetch_events_skips_503_retry_when_delay_and_request_do_not_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(content_module, "SOURCE_FETCH_BUDGET_SECONDS", 2.4)
+    client = FakeAsyncClient([
+        FakeResponse(503, headers={"Retry-After": "0.5"}),
+        *[empty_response(category) for category in CATEGORIES[1:]],
+    ])
+    install_client(monkeypatch, client)
+
+    events = await ContentService().fetch_events(10, 22)
+
+    assert events == []
+    assert [call[0] for call in client.calls].count("selected") == 1
