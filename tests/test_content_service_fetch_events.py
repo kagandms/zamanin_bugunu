@@ -82,6 +82,9 @@ async def test_fetch_events_retries_429_then_keeps_successful_category(monkeypat
     assert events[0]["text"] == candidate["text"]
     assert events[0]["_category"] == "selected"
     assert [call[0] for call in client.calls] == ["selected", "selected", "events", "births", "deaths"]
+    assert client.headers["User-Agent"] == (
+        "TarihBot/4.0 (https://github.com/kagandms/zamanin_bugunu)"
+    )
 
 
 @pytest.mark.asyncio
