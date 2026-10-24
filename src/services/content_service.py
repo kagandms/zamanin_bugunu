@@ -16,6 +16,7 @@ SOURCE_REQUEST_TIMEOUT_SECONDS = 2.0
 SOURCE_FETCH_BUDGET_SECONDS = 18.0
 SOURCE_MAX_ATTEMPTS = 2
 SOURCE_MAX_RETRY_AFTER_SECONDS = 1.0
+WIKIMEDIA_USER_AGENT = "TarihBot/4.0 (https://github.com/kagandms/zamanin_bugunu)"
 
 
 class ContentSourceFetchError(RuntimeError):
@@ -265,7 +266,7 @@ class ContentService:
         try:
             async with asyncio.timeout(SOURCE_FETCH_BUDGET_SECONDS):
                 async with httpx.AsyncClient() as client:
-                    client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
+                    client.headers.update({'User-Agent': WIKIMEDIA_USER_AGENT})
                     for cat in categories:
                         active_category = cat
                         active_started = time.monotonic()
@@ -444,7 +445,7 @@ class ContentService:
         top_candidates = scored[:5]
         
         async with httpx.AsyncClient() as client:
-            client.headers.update({'User-Agent': 'TarihBot/4.0 (Elite Edition)'})
+            client.headers.update({'User-Agent': WIKIMEDIA_USER_AGENT})
             
             final_scored = []
             for base_score, item in top_candidates:
