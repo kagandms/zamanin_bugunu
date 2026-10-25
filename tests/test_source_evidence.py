@@ -116,6 +116,7 @@ async def test_migration_is_idempotent_and_keeps_legacy_rows_without_backfill(tm
                 part_id, window, status, observed_at, target_age_seconds, organic_reply_status
             ) VALUES (1, '24h', 'success', '2026-10-23 08:00:00', 86400, 'unknown')
         """))
+        await connection.execute(text("DROP TABLE event_source_evidence"))
 
     await init_db(engine)
     await init_db(engine)
