@@ -11,10 +11,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.data.database import init_db
-from src.data.models import EventReservation, EventSourceEvidence, EventSourceEvidenceData, SourcePageEvidence
+from src.data.models import (
+    EventReservation,
+    EventSourceEvidence,
+    EventSourceEvidenceData,
+    GenerationEvidenceData,
+    SourcePageEvidence,
+)
 from src.data.repository import HistoryRepository
 from src.data.source_evidence import to_evidence_record
-from src.event_preparation import PreparationServices, _select_event
+from src.event_preparation import PreparationServices, _rewrite_request, _select_event
+from src.services.ai_service import AIService
+from src.services.content_guard import (
+    II_MURAD_SOURCE_URL,
+    KARS_SOURCE_URL,
+    EventRewriteRequest,
+    resolve_fact_profile,
+)
 
 
 @pytest.mark.asyncio
@@ -27,7 +40,7 @@ async def test_thin_source_keeps_feed_provenance_without_claiming_page_sentences
         },
         "pages": [{"pageid": 541, "title": "Ankara Antlaşması"}],
     }
-    ai = _ai("source_fallback:thin_source")
+    ai = AIService()
     services = PreparationServices(
         content=_content(candidate), ai=ai, image=object(),
     )
@@ -40,8 +53,9 @@ async def test_thin_source_keeps_feed_provenance_without_claiming_page_sentences
     )
     assert evidence.event_year == "1921"
     assert evidence.linked_pages[0].page_id == "541"
-    assert evidence.used_sentences == ()
-    assert evidence.context_unavailable_reason == "no_source_sentences_used"
+    assert evidence.generation_evidence.fallback_copied_sentences == ()
+    assert evidence.generation_evidence.model_input_sentences == ()
+    assert evidence.context_unavailable_reason == "no_source_evidence_consumed"
 
 
 @pytest.mark.asyncio
@@ -57,7 +71,7 @@ async def test_selected_page_and_used_sentence_match_the_request_context() -> No
                    "content_urls": {"desktop": {"page": "https://tr.wikipedia.org/wiki/Ankara_Antla%C5%9Fmas%C4%B1"}},
                    "extract": sentence}],
     }
-    ai = _ai("source_fallback:unprofiled_claims_unverified:source_context")
+    ai = AIService()
     services = PreparationServices(content=_content(candidate), ai=ai, image=object())
 
     rewrite = await _select_event(services, _history(), datetime(2026, 10, 22))
@@ -66,14 +80,152 @@ async def test_selected_page_and_used_sentence_match_the_request_context() -> No
     assert evidence.selected_page == evidence.linked_pages[0]
     assert evidence.selected_page.page_id == "541"
     assert evidence.selected_page.url == "https://tr.wikipedia.org/wiki/Ankara_Antla%C5%9Fmas%C4%B1"
-    assert evidence.used_sentences == (sentence,)
+    assert evidence.generation_evidence.fallback_copied_sentences == (sentence,)
+    assert evidence.generation_evidence.model_input_sentences == ()
+
+
+@pytest.mark.asyncio
+async def test_curated_profile_fallback_returns_its_identity_source_and_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core.config import Settings
+
+    monkeypatch.setattr("src.services.ai_service.settings", Settings(OPENROUTER_API_KEY=""))
+    event = "Osmanlı padişahı II. Murat, Kosova Zaferi'ni kazandı."
+    candidate = {
+        "text": event, "year": 1448, "_category": "selected",
+        "_source_feed": {
+            "provider": "wikimedia_onthisday", "requested_month": 10, "requested_day": 19,
+            "category": "selected", "fetched_at": datetime(2026, 10, 19, tzinfo=timezone.utc),
+        },
+        "pages": [{"pageid": 1448, "title": "II. Murad", "titles": {"canonical": "II. Murad"},
+                   "content_urls": {"desktop": {"page": II_MURAD_SOURCE_URL}}}],
+    }
+    request = _rewrite_request(candidate, datetime(2026, 10, 19))
+    profile = resolve_fact_profile(request)
+    assert profile is not None
+    services = PreparationServices(content=_content(candidate), ai=AIService(), image=object())
+
+    rewrite = await _select_event(services, _history(), datetime(2026, 10, 19))
+
+    result_evidence = rewrite.source_evidence.generation_evidence
+    assert rewrite.blocks[0].endswith(profile.fallback_context[0])
+    assert rewrite.blocks[1] == profile.fallback_context[1]
+    assert result_evidence.fallback_profile_id == profile.profile_id
+    assert result_evidence.fallback_profile_source_id == profile.source_id
+    assert result_evidence.fallback_profile_source_url == profile.source_url
+    assert result_evidence.fallback_profile_facts == profile.facts
+    assert result_evidence.fallback_copied_sentences == ()
+    assert result_evidence.claim_validation_scope == "curated_profile_facts"
+
+
+@pytest.mark.asyncio
+async def test_model_result_returns_inputs_and_scoped_validation_without_claiming_full_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core.config import Settings
+
+    monkeypatch.setattr("src.services.ai_service.settings", Settings(
+        OPENROUTER_API_KEY="test-key", AI_MODEL="mock-model", BACKUP_MODEL="backup-model",
+        LAST_RESORT_MODEL="last-model", MAX_THREAD_LENGTH=500,
+    ))
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"model": "mock-model", "choices": [{"message": {"content": (
+                "🕊️ Tarihte Bugün (13.10.1921)\nKars Antlaşması, 13 Ekim 1921'de Kars'ta imzalandı. "
+                "TTK tarafları listeliyor.\n---\nTTK, Batı Cephesi mücadelesinin Eylül 1922'ye kadar "
+                "sürdüğünü kaydediyor."
+            )}}]}
+
+    class Client:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> Response:
+            return Response()
+
+    monkeypatch.setattr("src.services.ai_service.httpx.AsyncClient", Client)
+    source_sentence = "Kars Antlaşması 13 Ekim 1921'de Kars'ta imzalandı."
+    request = EventRewriteRequest(
+        "Kars Antlaşması 13 Ekim 1921'de Kars'ta imzalandı.", "13.10.1921", "1921",
+        "Kars Antlaşması", KARS_SOURCE_URL, source_sentence,
+    )
+
+    result = await AIService().rewrite_event_safe(request)
+
+    assert result.evidence.model_input_sentences == (source_sentence,)
+    assert result.evidence.model_profile_id == "kars-treaty-1921"
+    assert result.evidence.model_profile_facts
+    assert result.evidence.fallback_copied_sentences == ()
+    assert result.evidence.claim_validation_scope == "scoped_rules_only"
+
+
+@pytest.mark.asyncio
+async def test_final_json_sizes_and_database_insert_survive_adversarial_text(tmp_path: Path) -> None:
+    from src.data.models import PostHistory
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'bounded.sqlite'}")
+    await init_db(engine)
+    adversarial = '"\\\x01\n\r\tğ漢字🙂' * 2000
+    evidence = _evidence(
+        original_event_text=adversarial,
+        provider="wikimedia_onthisday", requested_month=10, requested_day=22,
+        category="events", fetched_at=datetime(2026, 10, 22, tzinfo=timezone.utc),
+        linked_pages=tuple(SourcePageEvidence(str(index), adversarial, adversarial) for index in range(20)),
+        selected_page=SourcePageEvidence("page-id", adversarial, adversarial),
+        generation_evidence=GenerationEvidenceData(
+            model_input_sentences=(adversarial,) * 8,
+            fallback_copied_sentences=(adversarial,) * 8,
+            model_profile_facts=(adversarial,) * 8,
+            claim_validation_scope="scoped_rules_only",
+        ),
+        unavailable_reason=None,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        event_id = await HistoryRepository(session).reserve_event(EventReservation(
+            adversarial, source_evidence=evidence,
+        ))
+        row = (await session.execute(select(EventSourceEvidence))).scalar_one()
+        event = await session.get(PostHistory, event_id)
+
+    page_payload = json.loads(row.linked_pages_json)
+    selected_payload = json.loads(row.selected_page_json)
+    generation_payload = json.loads(row.generation_evidence_json)
+    serialized_columns = (
+        row.original_excerpt.encode("utf-8"), row.linked_pages_json.encode("utf-8"),
+        row.selected_page_json.encode("utf-8"), row.used_sentences_json.encode("utf-8"),
+        row.generation_evidence_json.encode("utf-8"),
+    )
+    assert event is not None and event.content_text == adversarial
+    assert len(row.original_excerpt.encode("utf-8")) <= 1200
+    assert len(row.linked_pages_json.encode("utf-8")) <= 8000
+    assert len(row.selected_page_json.encode("utf-8")) <= 1200
+    assert len(row.generation_evidence_json.encode("utf-8")) <= 5600
+    assert sum(map(len, serialized_columns)) <= 16000
+    assert page_payload["truncated"] is True
+    assert selected_payload["truncated"] is True
+    assert generation_payload["truncated"] is True
+    await engine.dispose()
 
 
 def test_missing_feed_is_unavailable_and_serialized_fields_are_bounded() -> None:
     record = to_evidence_record(17, _evidence(
         original_event_text="Olay " + "x" * 2000,
         linked_pages=tuple(_page() for _ in range(20)),
-        used_sentences=tuple(("Cümle " + "y" * 1300) for _ in range(8)),
+        generation_evidence=GenerationEvidenceData(
+            model_input_sentences=tuple(("Cümle " + "y" * 1300) for _ in range(8)),
+        ),
         unavailable_reason="feed_metadata_missing",
     ))
 
@@ -83,8 +235,9 @@ def test_missing_feed_is_unavailable_and_serialized_fields_are_bounded() -> None
     assert len(record.original_excerpt.encode()) <= 1200
     assert record.linked_pages_truncated is True
     assert len(record.linked_pages_json.encode()) <= 8000
-    assert record.used_sentences_truncated is True
-    assert len(record.used_sentences_json.encode()) <= 6000
+    assert record.used_sentences_json == "[]"
+    assert len(record.generation_evidence_json.encode()) <= 5600
+    assert json.loads(record.generation_evidence_json)["truncated"] is True
     assert len(record.original_text_sha256) == 64
     assert json.loads(record.linked_pages_json)
 
@@ -131,6 +284,39 @@ async def test_migration_is_idempotent_and_keeps_legacy_rows_without_backfill(tm
     assert legacy_count == 1
     assert evidence_count == 0
     assert retained_counts == (1, 1, 1, 1)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_existing_evidence_table_gets_generation_column_additively(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'prior-evidence.sqlite'}")
+    async with engine.begin() as connection:
+        await connection.execute(text("""
+            CREATE TABLE event_source_evidence (
+                id INTEGER PRIMARY KEY,
+                event_id INTEGER NOT NULL,
+                original_excerpt TEXT NOT NULL,
+                linked_pages_json TEXT NOT NULL,
+                selected_page_json TEXT NOT NULL,
+                used_sentences_json TEXT NOT NULL
+            )
+        """))
+        await connection.execute(text("""
+            INSERT INTO event_source_evidence (
+                id, event_id, original_excerpt, linked_pages_json, selected_page_json, used_sentences_json
+            ) VALUES (4, 99, 'old excerpt', '[]', '{}', '[]')
+        """))
+
+    await init_db(engine)
+    await init_db(engine)
+    async with engine.connect() as connection:
+        columns = await connection.execute(text("PRAGMA table_info(event_source_evidence)"))
+        column_names = {row[1] for row in columns.fetchall()}
+        old_row = (await connection.execute(text(
+            "SELECT event_id, original_excerpt, generation_evidence_json FROM event_source_evidence WHERE id=4"
+        ))).one()
+    assert "generation_evidence_json" in column_names
+    assert old_row == (99, "old excerpt", "null")
     await engine.dispose()
 
 
@@ -205,18 +391,3 @@ def _history() -> Any:
     from types import SimpleNamespace
 
     return SimpleNamespace(get_todays_posts=AsyncMock(return_value=[]), exists=AsyncMock(return_value=False))
-
-
-def _ai(generation_type: str) -> Any:
-    from unittest.mock import AsyncMock
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        rewrite_event_safe=AsyncMock(return_value=(
-            ["🕊️ Tarihte Bugün (22.10.1921)\n\nAnkara Antlaşması imzalandı."], [], None,
-        )),
-        last_generation_type=generation_type,
-        last_source_id=None,
-        last_source_url=None,
-        last_validation_reason="test",
-    )

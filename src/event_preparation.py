@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.data.models import EventReservation, EventSourceEvidenceData, PostMetadata
+from src.data.models import EventReservation, EventSourceEvidenceData, GenerationEvidenceData, PostMetadata
 from src.data.repository import HistoryRepository
 from src.data.source_evidence import build_source_evidence
 from src.services.ai_service import AIService
@@ -110,21 +110,15 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
             used_texts.append(candidate["text"])
             continue
         request = _rewrite_request(candidate, observed)
-        blocks, _, image_prompt = await services.ai.rewrite_event_safe(request)
+        generated = await services.ai.rewrite_event_safe(request)
+        blocks, _, image_prompt = generated
         output_length = sum(len(block) for block in blocks if isinstance(block, str))
         rejection = _rewrite_rejection(candidate, blocks, services.ai.last_generation_type)
         if rejection is None:
             logger.info("Prepared candidate={} generation={} validation={}", attempt + 1,
                 services.ai.last_generation_type, services.ai.last_validation_reason)
-            generation_type = services.ai.last_generation_type or "unknown"
-            selected_source_url = getattr(services.ai, "last_source_url", None) or request.source_url
-            selected_source_title = request.source_title if selected_source_url == request.source_url else None
-            evidence = build_source_evidence(
-                candidate,
-                source_title=selected_source_title,
-                source_url=selected_source_url,
-                used_sentences=_used_source_sentences(request, generation_type),
-            )
+            consumed_evidence = getattr(generated, "evidence", GenerationEvidenceData())
+            evidence = build_source_evidence(candidate, consumed_evidence)
             return EventRewrite(candidate, tuple(blocks), image_prompt, evidence)
         logger.info("Event candidate rejected reason={} chars={} attempt={}",
             rejection, output_length, attempt + 1)
@@ -152,24 +146,6 @@ def _rewrite_rejection(candidate: dict[str, object], blocks: list[str], generati
             return None
         return "below_minimum_length"
     return None
-
-
-def _used_source_sentences(request: EventRewriteRequest, generation_type: str) -> tuple[str, ...]:
-    if generation_type.startswith("source_fallback:") and not generation_type.endswith(":source_context"):
-        return ()
-    sentences = get_relevant_source_sentences(request)
-    if not generation_type.endswith(":source_context"):
-        return sentences
-    excerpt = AIService._source_excerpt(sentences, settings.MAX_THREAD_LENGTH - len("Kaynak özeti: "))
-    if not excerpt:
-        return ()
-    selected: list[str] = []
-    for sentence in sentences[:2]:
-        candidate_excerpt = " ".join((*selected, sentence))
-        if len(candidate_excerpt) > len(excerpt):
-            break
-        selected.append(sentence)
-    return tuple(selected)
 
 
 def _choose_image(rewrite: EventRewrite) -> tuple[str, str]:

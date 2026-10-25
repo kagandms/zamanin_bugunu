@@ -1,7 +1,9 @@
 import httpx
 import re
+from dataclasses import dataclass
 from src.core.config import settings
 from src.core.logger import logger
+from src.data.models import GenerationEvidenceData, SourcePageEvidence
 from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
     EventRewriteRequest,
@@ -16,7 +18,20 @@ from src.utils.text_utils import (
     sanitize_http_header_value,
     smart_split_text,
 )
-from typing import Tuple, List, Optional
+from typing import Iterator, Tuple, List, Optional
+
+
+@dataclass(frozen=True)
+class AIRewriteResult:
+    parts: list[str]
+    poll_options: list[str]
+    image_prompt: Optional[str]
+    evidence: GenerationEvidenceData
+
+    def __iter__(self) -> Iterator[object]:
+        yield self.parts
+        yield self.poll_options
+        yield self.image_prompt
 
 
 # Critical leak phrases — if AI contains ANY of these, it's an immediate leak/garbage output
@@ -273,14 +288,15 @@ class AIService:
 
         return "\n".join(cleaned_lines)
 
-    async def rewrite_event(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
+    async def rewrite_event(self, request: EventRewriteRequest) -> AIRewriteResult:
         """Generate and validate a complete post before any platform publishes it."""
         profile = resolve_fact_profile(request)
         if profile is None:
             raise ValueError("unprofiled_claims_unverified")
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
-        source_context = " ".join(get_relevant_source_sentences(request)) or None
+        source_sentences = get_relevant_source_sentences(request)
+        source_context = " ".join(source_sentences) or None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
         system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
@@ -381,7 +397,20 @@ class AIService:
                     self.last_validation_reason = None
                     self.last_source_id = profile.source_id if profile else None
                     self.last_source_url = profile.source_url if profile else request.source_url
-                    return generated_parts, poll_options, image_prompt
+                    return AIRewriteResult(
+                        generated_parts, poll_options, image_prompt,
+                        GenerationEvidenceData(
+                            selected_page=SourcePageEvidence(
+                                title=request.source_title, url=request.source_url,
+                            ) if request.source_title or request.source_url else None,
+                            model_input_sentences=source_sentences,
+                            model_profile_id=profile.profile_id,
+                            model_profile_source_id=profile.source_id,
+                            model_profile_source_url=profile.source_url,
+                            model_profile_facts=profile.facts,
+                            claim_validation_scope="scoped_rules_only",
+                        ),
+                    )
 
                 except Exception as e:
                     logger.warning(f"⚠️ {label} Model ({model}) exception: {e}")
@@ -407,7 +436,7 @@ class AIService:
             f"Doğrulanmış olay olguları:\n{fact_context or '- Ek doğrulanmış olgu sağlanmadı.'}"
         )
 
-    def generate_source_fallback(self, request: EventRewriteRequest, reason: str) -> Tuple[List[str], List[str], Optional[str]]:
+    def generate_source_fallback(self, request: EventRewriteRequest, reason: str) -> AIRewriteResult:
         """Build a fallback only from source text or curated, cited event facts."""
         profile = resolve_fact_profile(request)
         if profile:
@@ -417,10 +446,18 @@ class AIService:
             self.last_language_format_status = "fallback_template"
             self.last_generation_type = f"source_fallback:{reason}"
             if profile.profile_id == "ii-kosovo-1448":
-                return [
+                parts = [
                     f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{profile.fallback_context[0]}",
                     profile.fallback_context[1],
-                ], [], None
+                ]
+                return AIRewriteResult(parts, [], None, GenerationEvidenceData(
+                    selected_page=SourcePageEvidence(url=profile.source_url),
+                    fallback_profile_id=profile.profile_id,
+                    fallback_profile_source_id=profile.source_id,
+                    fallback_profile_source_url=profile.source_url,
+                    fallback_profile_facts=profile.facts,
+                    claim_validation_scope="curated_profile_facts",
+                ))
             parts = [
                 f"🕊️ Tarihte Bugün ({request.formatted_date}) Kars Antlaşması, 13 Ekim 1921'de Kars'ta imzalandı.",
                 "Türk Tarih Kurumu Kütüphanesi kaydı Türkiye, Ermenistan, Azerbaycan ve Gürcistan hükümetlerini taraf olarak listeliyor.",
@@ -429,7 +466,14 @@ class AIService:
             validation_reasons = validate_event_content(parts, request, profile)
             if validation_reasons:
                 raise RuntimeError(f"curated_fallback_rejected:{','.join(validation_reasons)}")
-            return parts, [], None
+            return AIRewriteResult(parts, [], None, GenerationEvidenceData(
+                selected_page=SourcePageEvidence(url=profile.source_url),
+                fallback_profile_id=profile.profile_id,
+                fallback_profile_source_id=profile.source_id,
+                fallback_profile_source_url=profile.source_url,
+                fallback_profile_facts=profile.facts,
+                claim_validation_scope="curated_profile_facts",
+            ))
         self.last_source_id = request.source_title
         self.last_source_url = request.source_url
         self.last_source_fact_status = get_source_fact_status(profile)
@@ -438,11 +482,11 @@ class AIService:
         source_event = request.original_text.strip()
         header = f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n"
         source_sentences = get_relevant_source_sentences(request)
-        source_context = source_sentences or None
         context_prefix = "Kaynak özeti: "
-        source_excerpt = self._source_excerpt(
-            source_context, settings.MAX_THREAD_LENGTH - len(context_prefix)
+        copied_sentences = self._source_excerpt_sentences(
+            source_sentences, settings.MAX_THREAD_LENGTH - len(context_prefix)
         )
+        source_excerpt = " ".join(copied_sentences) or None
         if source_excerpt:
             main_part = f"{header}{source_event}"
             available_length = settings.MAX_THREAD_LENGTH
@@ -450,25 +494,37 @@ class AIService:
                 main_part = main_part[:available_length - 3].rstrip() + "..."
             context_part = f"{context_prefix}{source_excerpt}"
             self.last_generation_type = f"source_fallback:{reason}:source_context"
-            return [main_part, context_part], [], None
+            return AIRewriteResult([main_part, context_part], [], None, GenerationEvidenceData(
+                selected_page=SourcePageEvidence(title=request.source_title, url=request.source_url)
+                if request.source_title or request.source_url else None,
+                fallback_copied_sentences=copied_sentences,
+                claim_validation_scope="not_performed",
+            ))
         main_part = f"{header}{source_event}"
         if len(main_part) > settings.MAX_THREAD_LENGTH:
             main_part = main_part[:settings.MAX_THREAD_LENGTH - 3].rstrip() + "..."
-        return [main_part], [], None
+        return AIRewriteResult([main_part], [], None, GenerationEvidenceData(
+            selected_page=SourcePageEvidence(title=request.source_title, url=request.source_url)
+            if request.source_title or request.source_url else None,
+            claim_validation_scope="not_performed",
+        ))
 
     @staticmethod
     def _source_excerpt(source_sentences: Optional[Tuple[str, ...]], max_chars: int) -> Optional[str]:
-        if not source_sentences:
-            return None
+        selected = AIService._source_excerpt_sentences(source_sentences or (), max_chars)
+        return " ".join(selected) or None
+
+    @staticmethod
+    def _source_excerpt_sentences(source_sentences: Tuple[str, ...], max_chars: int) -> tuple[str, ...]:
         selected: list[str] = []
         for sentence in source_sentences[:2]:
             candidate = " ".join((*selected, sentence))
             if len(candidate) > max_chars:
                 break
             selected.append(sentence)
-        return " ".join(selected) or None
+        return tuple(selected)
 
-    async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
+    async def rewrite_event_safe(self, request: EventRewriteRequest) -> AIRewriteResult:
         """Return a fully validated generation or a factual source-only fallback."""
         if resolve_fact_profile(request) is None:
             reason = "unprofiled_claims_unverified"
@@ -483,7 +539,9 @@ class AIService:
             tweets, poll_options, image_prompt = result
             validation_reasons = validate_event_content(tweets, request, resolve_fact_profile(request))
             if len("".join(tweets)) >= 80 and not validation_reasons:
-                return result
+                if isinstance(result, AIRewriteResult):
+                    return result
+                return AIRewriteResult(tweets, poll_options, image_prompt, GenerationEvidenceData())
             reason = self.last_validation_reason or ",".join(validation_reasons) or "output_too_short"
             logger.warning("AI output rejected by final source guard: {}", reason)
         except Exception as error:
