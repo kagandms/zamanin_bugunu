@@ -14,7 +14,9 @@ from src.data.models import (
     PostMetadata,
     PublicationPart,
     PublicationPartData,
+    EventSourceEvidenceData,
 )
+from src.data.source_evidence import to_evidence_record
 
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 
@@ -41,7 +43,7 @@ class HistoryRepository:
         return await self.reserve_event(EventReservation(text, category, tweet_id, topic_category))
 
     async def reserve_event(self, reservation: EventReservation) -> int:
-        """Persist an event reservation and typed content metadata."""
+        """Persist event and bounded provenance atomically before publication."""
         entry = PostHistory(
             content_text=reservation.text,
             source_category=reservation.category,
@@ -50,8 +52,19 @@ class HistoryRepository:
             **(asdict(reservation.metadata) if reservation.metadata else {}),
         )
         self.session.add(entry)
-        await self.session.commit()
-        await self.session.refresh(entry)
+        try:
+            await self.session.flush()
+            evidence = reservation.source_evidence or EventSourceEvidenceData(
+                original_event_text=reservation.text,
+                event_year=reservation.metadata.event_year if reservation.metadata else None,
+                unavailable_reason="feed_metadata_missing",
+            )
+            self.session.add(to_evidence_record(entry.id, evidence))
+            await self.session.commit()
+            await self.session.refresh(entry)
+        except Exception:
+            await self.session.rollback()
+            raise
         return entry.id
 
     async def reserve_publication(self, event_id: int, platform: str) -> int:

@@ -9,8 +9,9 @@ from urllib.parse import quote
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.data.models import EventReservation, PostMetadata
+from src.data.models import EventReservation, EventSourceEvidenceData, PostMetadata
 from src.data.repository import HistoryRepository
+from src.data.source_evidence import build_source_evidence
 from src.services.ai_service import AIService
 from src.services.content_guard import EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile
 from src.services.content_service import ContentService
@@ -34,6 +35,7 @@ class EventRewrite:
     candidate: dict[str, object]
     blocks: tuple[str, ...]
     image_prompt: str | None
+    source_evidence: EventSourceEvidenceData
 
 
 @dataclass(frozen=True)
@@ -107,13 +109,23 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
             logger.info("Event candidate rejected reason=already_published attempt={}", attempt + 1)
             used_texts.append(candidate["text"])
             continue
-        blocks, _, image_prompt = await services.ai.rewrite_event_safe(_rewrite_request(candidate, observed))
+        request = _rewrite_request(candidate, observed)
+        blocks, _, image_prompt = await services.ai.rewrite_event_safe(request)
         output_length = sum(len(block) for block in blocks if isinstance(block, str))
         rejection = _rewrite_rejection(candidate, blocks, services.ai.last_generation_type)
         if rejection is None:
             logger.info("Prepared candidate={} generation={} validation={}", attempt + 1,
                 services.ai.last_generation_type, services.ai.last_validation_reason)
-            return EventRewrite(candidate, tuple(blocks), image_prompt)
+            generation_type = services.ai.last_generation_type or "unknown"
+            selected_source_url = getattr(services.ai, "last_source_url", None) or request.source_url
+            selected_source_title = request.source_title if selected_source_url == request.source_url else None
+            evidence = build_source_evidence(
+                candidate,
+                source_title=selected_source_title,
+                source_url=selected_source_url,
+                used_sentences=_used_source_sentences(request, generation_type),
+            )
+            return EventRewrite(candidate, tuple(blocks), image_prompt, evidence)
         logger.info("Event candidate rejected reason={} chars={} attempt={}",
             rejection, output_length, attempt + 1)
         used_texts.append(candidate["text"])
@@ -140,6 +152,24 @@ def _rewrite_rejection(candidate: dict[str, object], blocks: list[str], generati
             return None
         return "below_minimum_length"
     return None
+
+
+def _used_source_sentences(request: EventRewriteRequest, generation_type: str) -> tuple[str, ...]:
+    if generation_type.startswith("source_fallback:") and not generation_type.endswith(":source_context"):
+        return ()
+    sentences = get_relevant_source_sentences(request)
+    if not generation_type.endswith(":source_context"):
+        return sentences
+    excerpt = AIService._source_excerpt(sentences, settings.MAX_THREAD_LENGTH - len("Kaynak özeti: "))
+    if not excerpt:
+        return ()
+    selected: list[str] = []
+    for sentence in sentences[:2]:
+        candidate_excerpt = " ".join((*selected, sentence))
+        if len(candidate_excerpt) > len(excerpt):
+            break
+        selected.append(sentence)
+    return tuple(selected)
 
 
 def _choose_image(rewrite: EventRewrite) -> tuple[str, str]:
@@ -194,5 +224,6 @@ async def prepare_event(services: PreparationServices, history: HistoryRepositor
     candidate = rewrite.candidate
     reservation = EventReservation(text=candidate["text"], category=candidate.get("_category"),
         legacy_tweet_id="RESERVED", topic_category=candidate.get("_topic_category") or
-        ContentService.classify_topic(candidate["text"]), metadata=metadata)
+        ContentService.classify_topic(candidate["text"]), metadata=metadata,
+        source_evidence=rewrite.source_evidence)
     return PreparedEvent(reservation, threads, "\n\n".join(blocks + (TELEGRAM_FOOTER,)), image)
