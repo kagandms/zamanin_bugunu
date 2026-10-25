@@ -2,22 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from src.data.models import (
-    EventSourceEvidence,
-    EventSourceEvidenceData,
-    GenerationEvidenceData,
-    SourcePageEvidence,
-)
+from src.data.models import EventSourceEvidence, EventSourceEvidenceData, SourcePageEvidence
 
 MAX_LINKED_PAGES = 8
 MAX_SENTENCES = 4
-MAX_LINKED_PAGES_JSON_BYTES = 7900
-MAX_SELECTED_PAGE_JSON_BYTES = 1100
-MAX_GENERATION_EVIDENCE_JSON_BYTES = 5500
 
 
 def _bounded_text(value: object, max_bytes: int) -> tuple[str | None, bool]:
@@ -59,16 +50,18 @@ def _candidate_pages(candidate: dict[str, Any]) -> tuple[SourcePageEvidence, ...
 
 def build_source_evidence(
     candidate: dict[str, Any],
-    generation_evidence: GenerationEvidenceData,
+    *,
+    source_title: str | None,
+    source_url: str | None,
+    used_sentences: tuple[str, ...],
 ) -> EventSourceEvidenceData:
-    """Build provenance from fetched input and the generator's explicit evidence result."""
+    """Build source evidence from the exact fetched candidate and prepared context."""
     feed = candidate.get("_source_feed")
     feed = feed if isinstance(feed, dict) else {}
     pages = _candidate_pages(candidate)
-    selected = generation_evidence.selected_page
-    if selected is not None:
-        selected = next((page for page in pages
-                         if page.url == selected.url and page.title == selected.title), selected)
+    selected = next((page for page in pages if page.url == source_url and page.title == source_title), None)
+    if selected is None and (source_title or source_url):
+        selected = SourcePageEvidence(title=source_title, url=source_url)
     feed_valid = (
         feed.get("provider") == "wikimedia_onthisday"
         and isinstance(feed.get("requested_month"), int)
@@ -92,25 +85,30 @@ def build_source_evidence(
         fetched_at=feed.get("fetched_at") if feed_valid else None,
         linked_pages=pages,
         selected_page=selected,
-        generation_evidence=generation_evidence,
+        used_sentences=used_sentences,
         unavailable_reason=None if feed_valid else "feed_metadata_missing",
-        context_unavailable_reason=(
-            None if (generation_evidence.model_input_sentences or
-                     generation_evidence.fallback_copied_sentences or
-                     generation_evidence.model_profile_facts or
-                     generation_evidence.fallback_profile_facts)
-            else "no_source_evidence_consumed"
-        ),
+        context_unavailable_reason=None if used_sentences else "no_source_sentences_used",
     )
 
 
 def to_evidence_record(event_id: int, evidence: EventSourceEvidenceData) -> EventSourceEvidence:
-    """Serialize evidence within database limits using final UTF-8 JSON byte counts."""
+    """Serialize bounded evidence while retaining inspectable text beside hashes."""
     excerpt, excerpt_truncated = _bounded_text(evidence.original_event_text, 1200)
-    pages_json, pages_truncated = _serialize_pages(evidence.linked_pages)
-    selected_json, selected_truncated = _serialize_selected_page(evidence.selected_page)
-    generation_json, _ = _serialize_generation_evidence(evidence.generation_evidence)
-    original_hash = _sha256(evidence.original_event_text)
+    page_results = [_page_value(page) for page in evidence.linked_pages[:MAX_LINKED_PAGES]]
+    page_values = [value for value, _ in page_results]
+    pages_truncated = len(evidence.linked_pages) > MAX_LINKED_PAGES
+    pages_truncated = pages_truncated or any(was_truncated for _, was_truncated in page_results)
+    sentence_values: list[str] = []
+    sentences_truncated = len(evidence.used_sentences) > MAX_SENTENCES
+    for sentence in evidence.used_sentences[:MAX_SENTENCES]:
+        bounded, was_truncated = _bounded_text(sentence, 1200)
+        sentences_truncated = sentences_truncated or was_truncated
+        if bounded is not None and not was_truncated:
+            sentence_values.append(bounded)
+    selected_value, selected_truncated = _page_value(evidence.selected_page) if evidence.selected_page else ({}, False)
+    selected_json = _json(selected_value)
+    pages_json = _json(page_values)
+    sentences_json = _json(sentence_values)
     material = {
         "event_id": event_id,
         "provider": evidence.provider,
@@ -120,10 +118,10 @@ def to_evidence_record(event_id: int, evidence: EventSourceEvidenceData) -> Even
         "fetched_at": evidence.fetched_at.isoformat() if evidence.fetched_at else None,
         "event_year": evidence.event_year,
         "original_excerpt": excerpt,
-        "original_text_sha256": original_hash,
-        "linked_pages": json.loads(pages_json),
+        "original_text_sha256": _sha256(evidence.original_event_text),
+        "linked_pages": page_values,
         "selected_page": json.loads(selected_json),
-        "generation_evidence": json.loads(generation_json),
+        "used_sentences": sentence_values,
         "unavailable_reason": evidence.unavailable_reason,
         "context_unavailable_reason": evidence.context_unavailable_reason,
     }
@@ -138,122 +136,21 @@ def to_evidence_record(event_id: int, evidence: EventSourceEvidenceData) -> Even
         category=_bounded_text(evidence.category, 32)[0],
         fetched_at=evidence.fetched_at,
         event_year=_bounded_text(evidence.event_year, 16)[0],
-        original_text_sha256=original_hash,
+        original_text_sha256=_sha256(evidence.original_event_text),
         original_excerpt=excerpt or "",
         original_excerpt_truncated=excerpt_truncated,
         linked_pages_json=pages_json,
         linked_pages_truncated=pages_truncated,
         selected_page_json=selected_json,
         selected_page_truncated=selected_truncated,
-        used_sentences_json="[]",
-        used_sentences_truncated=False,
-        generation_evidence_json=generation_json,
+        used_sentences_json=sentences_json,
+        used_sentences_truncated=sentences_truncated,
         unavailable_reason=_bounded_text(
             evidence.unavailable_reason or (None if feed_available else "feed_metadata_incomplete"), 64
         )[0],
         context_unavailable_reason=_bounded_text(evidence.context_unavailable_reason, 64)[0],
         evidence_sha256=_sha256(_json(material)),
     )
-
-
-def _serialize_pages(pages: tuple[SourcePageEvidence, ...]) -> tuple[str, bool]:
-    values = [_page_value(page)[0] for page in pages[:MAX_LINKED_PAGES]]
-    was_truncated = len(pages) > MAX_LINKED_PAGES or any(_page_value(page)[1] for page in pages[:MAX_LINKED_PAGES])
-    return _bounded_json({"items": values, "truncated": was_truncated}, MAX_LINKED_PAGES_JSON_BYTES)
-
-
-def _serialize_selected_page(page: SourcePageEvidence | None) -> tuple[str, bool]:
-    value, was_truncated = _page_value(page) if page else ({}, False)
-    return _bounded_json({"page": value if page else None, "truncated": was_truncated},
-                         MAX_SELECTED_PAGE_JSON_BYTES)
-
-
-def _serialize_generation_evidence(evidence: GenerationEvidenceData) -> tuple[str, bool]:
-    payload = {
-        "model_input_sentences": list(evidence.model_input_sentences[:MAX_SENTENCES]),
-        "fallback_copied_sentences": list(evidence.fallback_copied_sentences[:MAX_SENTENCES]),
-        "model_profile": _profile_payload(
-            evidence.model_profile_id, evidence.model_profile_source_id,
-            evidence.model_profile_source_url, evidence.model_profile_facts,
-        ),
-        "fallback_profile": _profile_payload(
-            evidence.fallback_profile_id, evidence.fallback_profile_source_id,
-            evidence.fallback_profile_source_url, evidence.fallback_profile_facts,
-        ),
-        "claim_validation_scope": evidence.claim_validation_scope,
-        "truncated": (
-            len(evidence.model_input_sentences) > MAX_SENTENCES
-            or len(evidence.fallback_copied_sentences) > MAX_SENTENCES
-        ),
-    }
-    return _bounded_json(payload, MAX_GENERATION_EVIDENCE_JSON_BYTES)
-
-
-def _profile_payload(
-    profile_id: str | None,
-    source_id: str | None,
-    source_url: str | None,
-    facts: tuple[str, ...],
-) -> dict[str, object]:
-    return {"profile_id": profile_id, "source_id": source_id, "source_url": source_url,
-            "facts": list(facts)}
-
-
-def _bounded_json(payload: dict[str, Any], max_bytes: int) -> tuple[str, bool]:
-    bounded = deepcopy(payload)
-    bounded["truncated"] = bool(bounded.get("truncated", False))
-    while True:
-        serialized = _json(bounded)
-        if len(serialized.encode("utf-8")) <= max_bytes:
-            return serialized, bounded["truncated"]
-        bounded["truncated"] = True
-        if _drop_largest_list_item(bounded) or _shrink_largest_string(bounded):
-            continue
-        bounded = {"truncated": True}
-
-
-def _drop_largest_list_item(value: object) -> bool:
-    containers = _list_containers(value)
-    candidates = [(len(_json(container[-1]).encode("utf-8")), container) for container in containers if container]
-    if not candidates:
-        return False
-    _, largest = max(candidates, key=lambda candidate: candidate[0])
-    largest.pop()
-    return True
-
-
-def _list_containers(value: object) -> list[list[object]]:
-    if isinstance(value, dict):
-        return [container for child in value.values() for container in _list_containers(child)]
-    if isinstance(value, list):
-        return [value, *(container for child in value for container in _list_containers(child))]
-    return []
-
-
-def _shrink_largest_string(value: object) -> bool:
-    candidates = _string_containers(value)
-    if not candidates:
-        return False
-    _, container, key = max(candidates, key=lambda candidate: candidate[0])
-    current = container[key]
-    reduced, _ = _bounded_text(current, max(0, len(current.encode("utf-8")) // 2))
-    container[key] = reduced or ""
-    return True
-
-
-def _string_containers(value: object) -> list[tuple[int, dict[str, Any], str]]:
-    candidates: list[tuple[int, dict[str, Any], str]] = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if key == "truncated":
-                continue
-            if isinstance(child, str):
-                candidates.append((len(child.encode("utf-8")), value, key))
-            candidates.extend(_string_containers(child))
-    if isinstance(value, list):
-        for child in value:
-            candidates.extend(_string_containers(child))
-    return candidates
 
 
 def _json(value: object) -> str:
