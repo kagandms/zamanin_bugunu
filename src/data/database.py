@@ -38,11 +38,44 @@ POST_HISTORY_COLUMNS = {
     "publication_status": "TEXT",
 }
 
+SOURCE_EVIDENCE_COLUMNS = {
+    "generation_evidence_json": "TEXT NOT NULL DEFAULT 'null'",
+}
+
 
 async def migrate_db(database_engine: AsyncEngine = engine) -> None:
     """Apply idempotent additive SQLite migrations and preserve legacy records."""
     async with database_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        source_evidence_columns = await connection.execute(text("PRAGMA table_info(event_source_evidence)"))
+        existing_evidence_columns = {row[1] for row in source_evidence_columns.fetchall()}
+        for column_name, column_type in SOURCE_EVIDENCE_COLUMNS.items():
+            if column_name not in existing_evidence_columns:
+                await connection.execute(text(
+                    f"ALTER TABLE event_source_evidence ADD COLUMN {column_name} {column_type}"
+                ))
+                existing_evidence_columns.add(column_name)
+        required_evidence_columns = {
+            "original_excerpt", "linked_pages_json", "selected_page_json",
+            "used_sentences_json", "generation_evidence_json",
+        }
+        if required_evidence_columns.issubset(existing_evidence_columns):
+            for operation in ("INSERT", "UPDATE"):
+                await connection.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS event_source_evidence_bounds_{operation.lower()}
+                    BEFORE {operation} ON event_source_evidence
+                    WHEN length(CAST(NEW.original_excerpt AS BLOB)) > 1200
+                      OR length(CAST(NEW.linked_pages_json AS BLOB)) > 8000
+                      OR length(CAST(NEW.selected_page_json AS BLOB)) > 1200
+                      OR length(CAST(NEW.used_sentences_json AS BLOB)) > 6000
+                      OR length(CAST(NEW.generation_evidence_json AS BLOB)) > 5600
+                      OR length(CAST(NEW.original_excerpt AS BLOB))
+                       + length(CAST(NEW.linked_pages_json AS BLOB))
+                       + length(CAST(NEW.selected_page_json AS BLOB))
+                       + length(CAST(NEW.used_sentences_json AS BLOB))
+                       + length(CAST(NEW.generation_evidence_json AS BLOB)) > 16000
+                    BEGIN SELECT RAISE(ABORT, 'source evidence exceeds storage bounds'); END
+                """))
         attempt_columns = await connection.execute(text("PRAGMA table_info(slot_attempts)"))
         existing_attempt_columns = {row[1] for row in attempt_columns.fetchall()}
         for column_name in ("trigger_source", "correlation_id", "intended_at", "intended_day", "intended_slot"):

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -80,6 +80,85 @@ class EventReservation:
     legacy_tweet_id: Optional[str] = None
     topic_category: Optional[str] = None
     metadata: Optional[PostMetadata] = None
+    source_evidence: Optional["EventSourceEvidenceData"] = None
+
+
+@dataclass(frozen=True)
+class SourcePageEvidence:
+    page_id: Optional[str] = None
+    title: Optional[str] = None
+    url: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class GenerationEvidenceData:
+    selected_page: Optional[SourcePageEvidence] = None
+    model_input_sentences: tuple[str, ...] = ()
+    fallback_copied_sentences: tuple[str, ...] = ()
+    model_profile_id: Optional[str] = None
+    model_profile_source_id: Optional[str] = None
+    model_profile_source_url: Optional[str] = None
+    model_profile_facts: tuple[str, ...] = ()
+    fallback_profile_id: Optional[str] = None
+    fallback_profile_source_id: Optional[str] = None
+    fallback_profile_source_url: Optional[str] = None
+    fallback_profile_facts: tuple[str, ...] = ()
+    claim_validation_scope: str = "not_performed"
+
+
+@dataclass(frozen=True)
+class EventSourceEvidenceData:
+    original_event_text: str
+    event_year: Optional[str] = None
+    provider: Optional[str] = None
+    requested_month: Optional[int] = None
+    requested_day: Optional[int] = None
+    category: Optional[str] = None
+    fetched_at: Optional[datetime] = None
+    linked_pages: tuple[SourcePageEvidence, ...] = ()
+    selected_page: Optional[SourcePageEvidence] = None
+    generation_evidence: GenerationEvidenceData = GenerationEvidenceData()
+    unavailable_reason: Optional[str] = None
+    context_unavailable_reason: Optional[str] = None
+
+
+class EventSourceEvidence(Base):
+    """Bounded, event-linked record of feed provenance and source context."""
+    __tablename__ = "event_source_evidence"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_event_source_evidence_event"),
+        CheckConstraint("status IN ('available', 'unavailable')", name="ck_source_evidence_status"),
+        CheckConstraint("length(CAST(original_excerpt AS BLOB)) <= 1200", name="ck_source_excerpt_bytes"),
+        CheckConstraint("length(CAST(linked_pages_json AS BLOB)) <= 8000", name="ck_source_pages_bytes"),
+        CheckConstraint("length(CAST(selected_page_json AS BLOB)) <= 1200", name="ck_selected_page_bytes"),
+        CheckConstraint("length(CAST(used_sentences_json AS BLOB)) <= 6000", name="ck_used_sentences_bytes"),
+        CheckConstraint("length(CAST(generation_evidence_json AS BLOB)) <= 5600", name="ck_generation_evidence_bytes"),
+        CheckConstraint("length(CAST(original_excerpt AS BLOB)) + length(CAST(linked_pages_json AS BLOB)) + length(CAST(selected_page_json AS BLOB)) + length(CAST(used_sentences_json AS BLOB)) + length(CAST(generation_evidence_json AS BLOB)) <= 16000", name="ck_source_evidence_total_bytes"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("post_history.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    requested_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    requested_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_year: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    original_text_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    original_excerpt_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    linked_pages_json: Mapped[str] = mapped_column(Text, nullable=False)
+    linked_pages_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    selected_page_json: Mapped[str] = mapped_column(Text, nullable=False)
+    selected_page_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    used_sentences_json: Mapped[str] = mapped_column(Text, nullable=False)
+    used_sentences_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    generation_evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    unavailable_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    context_unavailable_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 @dataclass(frozen=True)

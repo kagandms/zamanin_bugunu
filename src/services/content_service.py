@@ -32,6 +32,7 @@ class CategoryFetchResult:
     error_class: str
     attempts: int
     retry_after_seconds: float | None = None
+    fetched_at: datetime | None = None
 from src.services.source_context import select_event_source
 
 TOPIC_KEYWORDS = {
@@ -271,7 +272,17 @@ class ContentService:
                         active_category = cat
                         active_started = time.monotonic()
                         result = await self._fetch_category(client, cat, month, day, deadline)
-                        raw_items.extend(result.events)
+                        if result.succeeded and result.fetched_at is not None:
+                            feed = {
+                                "provider": "wikimedia_onthisday",
+                                "requested_month": month,
+                                "requested_day": day,
+                                "category": cat,
+                                "fetched_at": result.fetched_at,
+                            }
+                            raw_items.extend({**item, "_source_feed": feed} for item in result.events)
+                        else:
+                            raw_items.extend(result.events)
                         successful_categories += int(result.succeeded)
                         active_category = None
         except TimeoutError:
@@ -343,7 +354,8 @@ class ContentService:
             return CategoryFetchResult([], False, status_code, self._elapsed_ms(started), "invalid_json", attempt)
         except TypeError:
             return CategoryFetchResult([], False, status_code, self._elapsed_ms(started), "invalid_schema", attempt)
-        return CategoryFetchResult(items, True, status_code, self._elapsed_ms(started), "none", attempt)
+        return CategoryFetchResult(items, True, status_code, self._elapsed_ms(started), "none", attempt,
+                                   fetched_at=datetime.now(timezone.utc))
 
     @staticmethod
     def _decode_category_items(payload: object, category: str) -> list[dict]:
@@ -377,7 +389,8 @@ class ContentService:
     @staticmethod
     def _finish_category(started: float, status_code: int | None, result: CategoryFetchResult) -> CategoryFetchResult:
         return CategoryFetchResult(result.events, result.succeeded, status_code,
-                                   ContentService._elapsed_ms(started), result.error_class, result.attempts)
+                                   ContentService._elapsed_ms(started), result.error_class, result.attempts,
+                                   fetched_at=result.fetched_at)
 
     @staticmethod
     def _can_retry(result: CategoryFetchResult, attempt: int, deadline: float) -> bool:

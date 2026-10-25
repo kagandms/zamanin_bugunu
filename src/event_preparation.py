@@ -9,8 +9,9 @@ from urllib.parse import quote
 
 from src.core.config import settings
 from src.core.logger import logger
-from src.data.models import EventReservation, PostMetadata
+from src.data.models import EventReservation, EventSourceEvidenceData, GenerationEvidenceData, PostMetadata
 from src.data.repository import HistoryRepository
+from src.data.source_evidence import build_source_evidence
 from src.services.ai_service import AIService
 from src.services.content_guard import EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile
 from src.services.content_service import ContentService
@@ -34,6 +35,7 @@ class EventRewrite:
     candidate: dict[str, object]
     blocks: tuple[str, ...]
     image_prompt: str | None
+    source_evidence: EventSourceEvidenceData
 
 
 @dataclass(frozen=True)
@@ -107,13 +109,17 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
             logger.info("Event candidate rejected reason=already_published attempt={}", attempt + 1)
             used_texts.append(candidate["text"])
             continue
-        blocks, _, image_prompt = await services.ai.rewrite_event_safe(_rewrite_request(candidate, observed))
+        request = _rewrite_request(candidate, observed)
+        generated = await services.ai.rewrite_event_safe(request)
+        blocks, _, image_prompt = generated
         output_length = sum(len(block) for block in blocks if isinstance(block, str))
         rejection = _rewrite_rejection(candidate, blocks, services.ai.last_generation_type)
         if rejection is None:
             logger.info("Prepared candidate={} generation={} validation={}", attempt + 1,
                 services.ai.last_generation_type, services.ai.last_validation_reason)
-            return EventRewrite(candidate, tuple(blocks), image_prompt)
+            consumed_evidence = getattr(generated, "evidence", GenerationEvidenceData())
+            evidence = build_source_evidence(candidate, consumed_evidence)
+            return EventRewrite(candidate, tuple(blocks), image_prompt, evidence)
         logger.info("Event candidate rejected reason={} chars={} attempt={}",
             rejection, output_length, attempt + 1)
         used_texts.append(candidate["text"])
@@ -194,5 +200,6 @@ async def prepare_event(services: PreparationServices, history: HistoryRepositor
     candidate = rewrite.candidate
     reservation = EventReservation(text=candidate["text"], category=candidate.get("_category"),
         legacy_tweet_id="RESERVED", topic_category=candidate.get("_topic_category") or
-        ContentService.classify_topic(candidate["text"]), metadata=metadata)
+        ContentService.classify_topic(candidate["text"]), metadata=metadata,
+        source_evidence=rewrite.source_evidence)
     return PreparedEvent(reservation, threads, "\n\n".join(blocks + (TELEGRAM_FOOTER,)), image)
