@@ -11,7 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.data.database import init_db
-from src.data.models import EventReservation, EventSourceEvidence, EventSourceEvidenceData, SourcePageEvidence
+from src.data.models import (
+    EventReservation,
+    EventSourceEvidence,
+    EventSourceEvidenceData,
+    GenerationEvidenceData,
+    SourcePageEvidence,
+)
 from src.data.repository import HistoryRepository
 from src.data.source_evidence import to_evidence_record
 from src.event_preparation import PreparationServices, _select_event
@@ -147,6 +153,9 @@ async def test_checkpointed_database_reopen_keeps_evidence_on_same_event(tmp_pat
                 original_event_text="Ankara Antlaşması imzalandı.", provider="wikimedia_onthisday",
                 requested_month=10, requested_day=22, category="events",
                 fetched_at=datetime(2026, 10, 22, tzinfo=timezone.utc),
+                generation_evidence=GenerationEvidenceData(
+                    fallback_copied_sentences=("Ankara Antlaşması 1921'de imzalandı.",),
+                ),
             ),
         ))
     await engine.dispose()
@@ -159,7 +168,194 @@ async def test_checkpointed_database_reopen_keeps_evidence_on_same_event(tmp_pat
     assert row.event_id == event_id
     assert row.provider == "wikimedia_onthisday"
     assert row.status == "available"
+    persisted_generation = json.loads(row.generation_evidence_json)
+    assert row.event_id == event_id
+    assert persisted_generation["fallback_copied_sentences"] == ["Ankara Antlaşması 1921'de imzalandı."]
     await reopened.dispose()
+
+
+@pytest.mark.asyncio
+async def test_real_ai_service_fallback_trace_matches_copied_source_paragraph(tmp_path: Path) -> None:
+    from src.services.ai_service import AIService
+    from src.services.content_guard import EventRewriteRequest
+
+    sentence = "Ankara Antlaşması 1921'de TBMM ile Fransa arasında imzalandı."
+    request = EventRewriteRequest(
+        original_text="Ankara Antlaşması imzalandı.",
+        formatted_date="22.10.1921",
+        year="1921",
+        source_title="Ankara Antlaşması",
+        source_url="https://tr.wikipedia.org/wiki/Ankara_Antla%C5%9Fmas%C4%B1",
+        source_context=sentence,
+    )
+    ai = AIService()
+    ai.api_key = ""  # Real safe fallback path, with no model/network call.
+    blocks, _, _ = await ai.rewrite_event_safe(request)
+
+    assert len(blocks) == 2
+    record = to_evidence_record(1, _evidence(
+        original_event_text=request.original_text,
+        used_sentences=ai.last_generation_evidence.fallback_copied_sentences,
+        generation_evidence=ai.last_generation_evidence,
+    ))
+    trace = json.loads(record.generation_evidence_json)
+    copied_paragraph = " ".join(trace["fallback_copied_sentences"])
+    assert blocks[1] == f"Kaynak özeti: {copied_paragraph}"
+    assert trace["fallback_copied_event_text"] == request.original_text
+    assert trace["fallback_copied_sentences"] == [sentence]
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'fallback.sqlite'}")
+    await init_db(engine)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        event_id = await HistoryRepository(session).reserve_event(EventReservation(
+            request.original_text,
+            source_evidence=EventSourceEvidenceData(
+                original_event_text=request.original_text,
+                provider="wikimedia_onthisday",
+                requested_month=10,
+                requested_day=22,
+                category="events",
+                fetched_at=datetime(2026, 10, 22, tzinfo=timezone.utc),
+                used_sentences=ai.last_generation_evidence.fallback_copied_sentences,
+                generation_evidence=ai.last_generation_evidence,
+            ),
+        ))
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        stored = (await session.execute(select(EventSourceEvidence))).scalar_one()
+    assert stored.event_id == event_id
+    assert json.loads(stored.generation_evidence_json)["fallback_copied_sentences"] == [sentence]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_profiled_fallback_keeps_profile_identity_and_facts_unknown_of_model_input() -> None:
+    from src.services.ai_service import AIService
+    from src.services.content_guard import EventRewriteRequest, II_MURAD_SOURCE_URL, resolve_fact_profile
+
+    request = EventRewriteRequest(
+        original_text="Osmanlı padişahı II. Murat, Kosova Zaferi'ni kazandı.",
+        formatted_date="17.10.1448",
+        year="1448",
+        source_title="II. Murad",
+        source_url=II_MURAD_SOURCE_URL,
+    )
+    expected = resolve_fact_profile(request)
+    ai = AIService()
+    ai.api_key = ""
+
+    blocks, _, _ = await ai.rewrite_event_safe(request)
+
+    assert len(blocks) == 2
+    trace = json.loads(to_evidence_record(1, _evidence(
+        original_event_text=request.original_text,
+        generation_evidence=ai.last_generation_evidence,
+    )).generation_evidence_json)
+    assert trace["model_input_captured"] is False
+    assert trace["model_input_sentences"] == []
+    assert trace["fallback_copied_event_text"] is None
+    assert trace["curated_profile"] == {
+        "id": expected.profile_id,
+        "source_id": expected.source_id,
+        "source_url": expected.source_url,
+        "facts": list(expected.facts),
+    }
+    assert trace["model_input_semantics"] == "input_only_not_claim_validation"
+
+
+@pytest.mark.asyncio
+async def test_model_payload_source_sentences_and_profile_facts_are_traced_without_network(monkeypatch) -> None:
+    from src.services.ai_service import AIService
+    from src.services.content_guard import EventRewriteRequest, II_MURAD_SOURCE_URL, resolve_fact_profile
+
+    sentence = "II. Kosova Muharebesi 17-20 Ekim 1448'te yapıldı."
+    request = EventRewriteRequest(
+        original_text="II. Kosova Muharebesi 17-20 Ekim 1448'te yapıldı.",
+        formatted_date="17.10.1448",
+        year="1448",
+        source_title="II. Murad",
+        source_url=II_MURAD_SOURCE_URL,
+        source_context=sentence + " Üç gün süren çetin muharebeden sonra Macarlar yenildi.",
+    )
+    profile = resolve_fact_profile(request)
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"model": "test-model", "choices": [{"message": {
+                "content": "🕊️ Tarihte Bugün (17.10.1448)\nII. Kosova Muharebesi 17-20 Ekim 1448'te yapıldı."
+            }}]}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured["payload"] = json
+            return Response()
+
+    monkeypatch.setattr("src.services.ai_service.httpx.AsyncClient", lambda **kwargs: Client())
+    ai = AIService()
+    ai.api_key = "test-only"
+
+    await ai.rewrite_event(request)
+
+    assert sentence in captured["payload"]["messages"][1]["content"]
+    assert ai.last_generation_evidence.model_input_captured is True
+    assert ai.last_generation_evidence.model_input_sentences == (sentence,)
+    assert ai.last_generation_evidence.curated_profile_id == profile.profile_id
+    assert ai.last_generation_evidence.curated_profile_facts == profile.facts
+
+
+@pytest.mark.asyncio
+async def test_escaped_generation_json_fits_real_sqlite_insert_and_remains_valid(tmp_path: Path) -> None:
+    escaped = ('"\\\n\t' * 250)
+    generation = GenerationEvidenceData(
+        model_input_captured=True,
+        model_input_event_text=escaped,
+        model_input_sentences=(escaped,) * 4,
+        fallback_copied_sentences=(escaped,) * 4,
+        curated_profile_id=escaped,
+        curated_profile_source_id=escaped,
+        curated_profile_source_url="https://example.test/" + escaped,
+        curated_profile_facts=(escaped,) * 8,
+    )
+    evidence = _evidence(
+        original_event_text=escaped,
+        linked_pages=tuple(SourcePageEvidence(escaped, escaped, "https://example.test/" + escaped) for _ in range(8)),
+        selected_page=SourcePageEvidence(escaped, escaped, "https://example.test/" + escaped),
+        used_sentences=(escaped,) * 4,
+        generation_evidence=generation,
+    )
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'escaped.sqlite'}")
+    await init_db(engine)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        event_id = await HistoryRepository(session).reserve_event(
+            EventReservation("escaped event", source_evidence=evidence)
+        )
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        stored = (await session.execute(select(EventSourceEvidence))).scalar_one()
+    trace = json.loads(stored.generation_evidence_json)
+    total_bytes = sum(len((value or "").encode("utf-8")) for value in (
+        stored.original_excerpt,
+        stored.linked_pages_json,
+        stored.selected_page_json,
+        stored.used_sentences_json,
+        stored.generation_evidence_json,
+    ))
+    assert stored.event_id == event_id
+    assert total_bytes <= 16000
+    assert len(stored.generation_evidence_json.encode("utf-8")) <= 8000
+    assert stored.generation_evidence_truncated is True
+    assert trace["truncated"] is True
+    assert isinstance(trace["model_input_sentences"], list)
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

@@ -124,6 +124,7 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
                 source_title=selected_source_title,
                 source_url=selected_source_url,
                 used_sentences=_used_source_sentences(request, generation_type),
+                generation_evidence=getattr(services.ai, "last_generation_evidence", None),
             )
             return EventRewrite(candidate, tuple(blocks), image_prompt, evidence)
         logger.info("Event candidate rejected reason={} chars={} attempt={}",

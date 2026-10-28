@@ -43,6 +43,26 @@ async def migrate_db(database_engine: AsyncEngine = engine) -> None:
     """Apply idempotent additive SQLite migrations and preserve legacy records."""
     async with database_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        evidence_columns = await connection.execute(text("PRAGMA table_info(event_source_evidence)"))
+        existing_evidence_columns = {row[1] for row in evidence_columns.fetchall()}
+        if "generation_evidence_json" not in existing_evidence_columns:
+            await connection.execute(text("""
+                ALTER TABLE event_source_evidence ADD COLUMN generation_evidence_json TEXT
+                CHECK (
+                    generation_evidence_json IS NULL OR (
+                        length(CAST(generation_evidence_json AS BLOB)) <= 8000
+                        AND length(CAST(original_excerpt AS BLOB))
+                            + length(CAST(linked_pages_json AS BLOB))
+                            + length(CAST(selected_page_json AS BLOB))
+                            + length(CAST(used_sentences_json AS BLOB))
+                            + length(CAST(generation_evidence_json AS BLOB)) <= 16000
+                    )
+                )
+            """))
+        if "generation_evidence_truncated" not in existing_evidence_columns:
+            await connection.execute(text(
+                "ALTER TABLE event_source_evidence ADD COLUMN generation_evidence_truncated BOOLEAN"
+            ))
         attempt_columns = await connection.execute(text("PRAGMA table_info(slot_attempts)"))
         existing_attempt_columns = {row[1] for row in attempt_columns.fetchall()}
         for column_name in ("trigger_source", "correlation_id", "intended_at", "intended_day", "intended_slot"):
