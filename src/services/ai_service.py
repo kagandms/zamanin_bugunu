@@ -1,7 +1,9 @@
 import httpx
 import re
+from dataclasses import replace
 from src.core.config import settings
 from src.core.logger import logger
+from src.data.models import GenerationEvidenceData
 from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
     EventRewriteRequest,
@@ -109,6 +111,7 @@ class AIService:
         self.last_source_fact_status = "not_checked"
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
+        self.last_generation_evidence = GenerationEvidenceData()
         self.prompt_version = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
@@ -283,6 +286,13 @@ class AIService:
         source_context = " ".join(get_relevant_source_sentences(request)) or None
         self.last_source_fact_status = get_source_fact_status(profile)
         self.last_language_format_status = "unknown"
+        self.last_generation_evidence = GenerationEvidenceData(
+            model_input_sentences=tuple(get_relevant_source_sentences(request)),
+            curated_profile_id=profile.profile_id,
+            curated_profile_source_id=profile.source_id,
+            curated_profile_source_url=profile.source_url,
+            curated_profile_facts=profile.facts,
+        )
         system_prompt = self._build_system_prompt(request, profile.facts if profile else ())
         year_context = f" ({request.year} yılında gerçekleşti)" if request.year else ""
 
@@ -322,6 +332,13 @@ class AIService:
             for model, label in zip(models[:model_attempt_limit], model_names[:model_attempt_limit]):
                 try:
                     payload["model"] = model
+                    # This is the exact event text placed in the user payload; source
+                    # sentences are captured separately and never imply validation.
+                    self.last_generation_evidence = replace(
+                        self.last_generation_evidence,
+                        model_input_captured=True,
+                        model_input_event_text=request.original_text,
+                    )
                     response = await client.post(self.url, headers=self.headers, json=payload)
 
                     if response.status_code != 200:
@@ -411,6 +428,13 @@ class AIService:
         """Build a fallback only from source text or curated, cited event facts."""
         profile = resolve_fact_profile(request)
         if profile:
+            self.last_generation_evidence = replace(
+                self.last_generation_evidence,
+                curated_profile_id=profile.profile_id,
+                curated_profile_source_id=profile.source_id,
+                curated_profile_source_url=profile.source_url,
+                curated_profile_facts=profile.facts,
+            )
             self.last_source_id = profile.source_id
             self.last_source_url = profile.source_url
             self.last_source_fact_status = get_source_fact_status(profile)
@@ -440,9 +464,10 @@ class AIService:
         source_sentences = get_relevant_source_sentences(request)
         source_context = source_sentences or None
         context_prefix = "Kaynak özeti: "
-        source_excerpt = self._source_excerpt(
+        copied_sentences = self._source_excerpt_sentences(
             source_context, settings.MAX_THREAD_LENGTH - len(context_prefix)
         )
+        source_excerpt = " ".join(copied_sentences) or None
         if source_excerpt:
             main_part = f"{header}{source_event}"
             available_length = settings.MAX_THREAD_LENGTH
@@ -450,26 +475,46 @@ class AIService:
                 main_part = main_part[:available_length - 3].rstrip() + "..."
             context_part = f"{context_prefix}{source_excerpt}"
             self.last_generation_type = f"source_fallback:{reason}:source_context"
+            self.last_generation_evidence = replace(
+                self.last_generation_evidence,
+                fallback_copied_event_text=source_event if main_part[len(header):] == source_event else None,
+                fallback_event_text_truncated=main_part[len(header):] != source_event,
+                fallback_copied_sentences=copied_sentences,
+            )
             return [main_part, context_part], [], None
         main_part = f"{header}{source_event}"
         if len(main_part) > settings.MAX_THREAD_LENGTH:
             main_part = main_part[:settings.MAX_THREAD_LENGTH - 3].rstrip() + "..."
+        self.last_generation_evidence = replace(
+            self.last_generation_evidence,
+            fallback_copied_event_text=source_event if main_part[len(header):] == source_event else None,
+            fallback_event_text_truncated=main_part[len(header):] != source_event,
+            fallback_copied_sentences=(),
+        )
         return [main_part], [], None
 
     @staticmethod
     def _source_excerpt(source_sentences: Optional[Tuple[str, ...]], max_chars: int) -> Optional[str]:
+        selected = AIService._source_excerpt_sentences(source_sentences, max_chars)
+        return " ".join(selected) or None
+
+    @staticmethod
+    def _source_excerpt_sentences(
+        source_sentences: Optional[Tuple[str, ...]], max_chars: int
+    ) -> Tuple[str, ...]:
         if not source_sentences:
-            return None
+            return ()
         selected: list[str] = []
         for sentence in source_sentences[:2]:
             candidate = " ".join((*selected, sentence))
             if len(candidate) > max_chars:
                 break
             selected.append(sentence)
-        return " ".join(selected) or None
+        return tuple(selected)
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Return a fully validated generation or a factual source-only fallback."""
+        self.last_generation_evidence = GenerationEvidenceData()
         if resolve_fact_profile(request) is None:
             reason = "unprofiled_claims_unverified"
             self.last_generation_model = None
