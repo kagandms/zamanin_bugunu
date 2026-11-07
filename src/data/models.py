@@ -102,8 +102,24 @@ class EventSourceEvidenceData:
     linked_pages: tuple[SourcePageEvidence, ...] = ()
     selected_page: Optional[SourcePageEvidence] = None
     used_sentences: tuple[str, ...] = ()
+    generation_evidence: Optional["GenerationEvidenceData"] = None
     unavailable_reason: Optional[str] = None
     context_unavailable_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class GenerationEvidenceData:
+    """Trace prompt inputs and verbatim source context copied by fallback."""
+    model_input_captured: bool = False
+    model_input_event_text: Optional[str] = None
+    model_input_sentences: tuple[str, ...] = ()
+    fallback_copied_event_text: Optional[str] = None
+    fallback_event_text_truncated: bool = False
+    fallback_copied_sentences: tuple[str, ...] = ()
+    curated_profile_id: Optional[str] = None
+    curated_profile_source_id: Optional[str] = None
+    curated_profile_source_url: Optional[str] = None
+    curated_profile_facts: tuple[str, ...] = ()
 
 
 class EventSourceEvidence(Base):
@@ -116,7 +132,8 @@ class EventSourceEvidence(Base):
         CheckConstraint("length(CAST(linked_pages_json AS BLOB)) <= 8000", name="ck_source_pages_bytes"),
         CheckConstraint("length(CAST(selected_page_json AS BLOB)) <= 1200", name="ck_selected_page_bytes"),
         CheckConstraint("length(CAST(used_sentences_json AS BLOB)) <= 6000", name="ck_used_sentences_bytes"),
-        CheckConstraint("length(CAST(original_excerpt AS BLOB)) + length(CAST(linked_pages_json AS BLOB)) + length(CAST(selected_page_json AS BLOB)) + length(CAST(used_sentences_json AS BLOB)) <= 16000", name="ck_source_evidence_total_bytes"),
+        CheckConstraint("length(CAST(original_excerpt AS BLOB)) + length(CAST(linked_pages_json AS BLOB)) + length(CAST(selected_page_json AS BLOB)) + length(CAST(used_sentences_json AS BLOB)) + length(CAST(COALESCE(generation_evidence_json, '') AS BLOB)) <= 16000", name="ck_source_evidence_total_bytes"),
+        CheckConstraint("generation_evidence_json IS NULL OR length(CAST(generation_evidence_json AS BLOB)) <= 8000", name="ck_generation_evidence_bytes"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -137,6 +154,8 @@ class EventSourceEvidence(Base):
     selected_page_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
     used_sentences_json: Mapped[str] = mapped_column(Text, nullable=False)
     used_sentences_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    generation_evidence_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    generation_evidence_truncated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     unavailable_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     context_unavailable_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
