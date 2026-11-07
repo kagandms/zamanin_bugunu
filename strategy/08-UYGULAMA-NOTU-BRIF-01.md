@@ -22,8 +22,8 @@ Brif: `strategy/07-HAIKU-BRIF-01-AI-YAZIMI.md`. Kapsam: profilsiz olaylarda AI'y
 ## Bilinen riskler
 
 - **Kaynak sayfası yanlış olabilir.** Sayfa seçimi değişmedi; ama sayfanın özetinden alınan cümleler olay dışına kayabilir. Doğrulayıcı yalnızca sayı/ad/yasak kalıbı yakalar; anlam kayması yakalamaz. İnceleme için `strategy/evidence/ilk-10-cikti.md`.
-- **"tek" yasağı.** Brifteki kural gereği "tek" kaynakta yoksa reddedilir. `06` dokümanındaki "tek bir ret oyu" örneği bu yüzden reddedilir (örnek ilk tur için kabul edilebilir ama uygulamada geçmez).
+- **"tek" yasağı (çözüldü: 06 örneği değiştirildi).** Brifteki kural gereği "tek" kaynakta yoksa reddedilir. `06` dokümanındaki "tek bir ret oyu" örneği bu yüzden reddedilir (örnek ilk tur için kabul edilebilir ama uygulamada geçmez).
 - **Kişi sayfaları.** Doğum/ölüm olaylarında sayfa başlığı "kind" kelimesi taşımaz (ör. "Burak Güven"); özet zenginleştirmesi uygulanmaz, çoğu bu olaylar ince kalır.
-- **Gecikme.** Profilsiz olaylarda en fazla 3 model denenir (her biri 35 sn zaman aşımı). Olay başına süre artabilir.
+- **Gecikme.** Profilsiz olaylarda kaskadın 4 modeli denenir (`google/gemma-4-31b-it:free` → `nvidia/nemotron-3-ultra-550b-a55b:free` → `google/gemma-4-26b-a4b-it:free` → `openrouter/free`); her biri 35 sn zaman aşımı. Model kimlikleri yalnızca `src/core/config.py` / ortam değişkenlerinden okunur. Canlı denemede çağrılar arası 20 sn beklenir (yalnızca deneme betiğinde; üretimde yoktur). Olay başına süre artabilir.
 - **Sıcaklık.** `temperature=0.5` seçildi (brif belirtmiyordu); veriyle ayarlanabilir.
 - **Üretim kapalı.** Bu değişiklik yalnızca kod ve testtir. Yayın yapılmadı, veritabanına yazılmadı, bot canlıda açılmadı. Canlı açılış için kullanıcı onayı gerekir.

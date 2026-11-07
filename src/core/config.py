@@ -20,12 +20,11 @@ class Settings(BaseSettings):
     
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: Optional[SecretStr] = None
-    # Cascade of reliable free models
-    AI_MODEL: str = "inclusionai/ling-3.0-flash-sante:free"
-    BACKUP_MODEL: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    TERTIARY_MODEL: str = "google/gemma-4-31b-it:free"
-    QUATERNARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
-    LAST_RESORT_MODEL: str = "qwen/qwen3.8-27b:free"
+    # Free-model cascade, tried in this order (no paid models). Override via env/.env.
+    AI_MODEL: str = "google/gemma-4-31b-it:free"
+    BACKUP_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    TERTIARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
+    LAST_RESORT_MODEL: str = "openrouter/free"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

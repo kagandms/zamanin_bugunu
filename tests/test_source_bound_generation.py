@@ -41,7 +41,7 @@ def _use_fake_models(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> li
     """Each model attempt returns the next scripted content; every request payload is recorded."""
     monkeypatch.setattr("src.services.ai_service.settings", Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="model-1", BACKUP_MODEL="model-2",
-        TERTIARY_MODEL="model-3", QUATERNARY_MODEL="model-4", LAST_RESORT_MODEL="model-5",
+        TERTIARY_MODEL="model-3", LAST_RESORT_MODEL="model-4",
         MAX_THREAD_LENGTH=500,
     ))
     payloads: list[dict[str, object]] = []
@@ -110,12 +110,12 @@ async def test_unsupported_year_is_rejected_and_next_model_is_tried(monkeypatch:
 @pytest.mark.asyncio
 async def test_all_models_failing_validation_falls_back_to_source(monkeypatch: pytest.MonkeyPatch) -> None:
     bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
-    payloads = _use_fake_models(monkeypatch, [bad, bad, bad])
+    payloads = _use_fake_models(monkeypatch, [bad, bad, bad, bad])
     service = AIService()
 
     parts, _, _ = await service.rewrite_event_safe(_request())
 
-    assert len(payloads) == 3
+    assert len(payloads) == 4
     assert service.last_generation_type.startswith("source_fallback:unsupported_number")
     assert "1923" not in "\n".join(parts)
 

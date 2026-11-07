@@ -212,7 +212,7 @@ async def test_model_guard_tries_two_candidates_then_uses_source_fallback(monkey
 
     settings = Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="first-model", BACKUP_MODEL="second-model",
-        TERTIARY_MODEL="third-model", QUATERNARY_MODEL="fourth-model", LAST_RESORT_MODEL="fifth-model",
+        TERTIARY_MODEL="third-model", LAST_RESORT_MODEL="fourth-model",
     )
     monkeypatch.setattr("src.services.ai_service.settings", settings)
     requests: list[dict[str, object]] = []

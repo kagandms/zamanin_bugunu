@@ -113,7 +113,6 @@ EMOJI_CHOICES = ("🕊️", "⚔️", "🏛️", "🔬", "🎭", "🌍")
 DEFAULT_EMOJI = "🕊️"
 PROMPT_VERSION_PROFILED = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
 PROMPT_VERSION_SOURCE_BOUND = f"event-rewrite-v5+{CONTENT_GUARD_VERSION}"
-_SOURCE_BOUND_MODEL_ATTEMPTS = 3
 _EMOJI_LINE = re.compile(r"^[ \t]*EMOJI:[ \t]*(\S+)", re.MULTILINE)
 _ECHOED_HEADER = re.compile(r"^\S{0,3}\s*Tarihte Bugün\s*\([^)]*\)\s*", re.IGNORECASE)
 _TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
@@ -352,21 +351,9 @@ class AIService:
             "reasoning": {"effort": "none"}  # Disable OpenRouter reasoning/scratchpad
         }
 
-        # 5-tier cascade of verified free models
-        models = [
-            settings.AI_MODEL, 
-            settings.BACKUP_MODEL, 
-            getattr(settings, "TERTIARY_MODEL", "google/gemma-4-31b-it:free"), 
-            getattr(settings, "QUATERNARY_MODEL", "google/gemma-4-26b-a4b-it:free"),
-            settings.LAST_RESORT_MODEL
-        ]
-        model_names = [
-            "Primary (Ling 3.0)",
-            "Secondary (Nemotron 3 Super)",
-            "Tertiary (Gemma 4 31B)",
-            "Quaternary (Gemma 4 26B)",
-            "Last Resort (Qwen 3.8)"
-        ]
+        cascade = self._model_cascade()
+        models = [model for model, _ in cascade]
+        model_names = [label for _, label in cascade]
 
         model_attempt_limit = min(2, len(models))
         self.last_validation_reason = None
@@ -442,6 +429,16 @@ class AIService:
             logger.error("❌ No AI candidate passed generation and source checks.")
             raise RuntimeError(self.last_validation_reason or "all_models_failed")
 
+    @staticmethod
+    def _model_cascade() -> List[Tuple[str, str]]:
+        """Ordered (model id, label) pairs from settings only; no model ids live in code."""
+        return [
+            (settings.AI_MODEL, "Primary"),
+            (settings.BACKUP_MODEL, "Secondary"),
+            (settings.TERTIARY_MODEL, "Tertiary"),
+            (settings.LAST_RESORT_MODEL, "Last resort"),
+        ]
+
     async def _rewrite_source_bound(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Interpret the event sentence and its source summary; no curated facts are required."""
         if not self.api_key:
@@ -460,11 +457,7 @@ class AIService:
             "max_tokens": 1200,
             "reasoning": {"effort": "none"},
         }
-        cascade = [
-            (settings.AI_MODEL, "Primary (Ling 3.0)"),
-            (settings.BACKUP_MODEL, "Secondary (Nemotron 3 Super)"),
-            (getattr(settings, "TERTIARY_MODEL", "google/gemma-4-31b-it:free"), "Tertiary (Gemma 4 31B)"),
-        ][:_SOURCE_BOUND_MODEL_ATTEMPTS]
+        cascade = self._model_cascade()
         block_limit = settings.MAX_THREAD_LENGTH - 20
         rejections: list[str] = []
         self.last_validation_reason = None
