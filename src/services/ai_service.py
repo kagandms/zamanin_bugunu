@@ -1,5 +1,7 @@
+import asyncio
 import httpx
 import re
+import time
 from src.core.config import settings
 from src.core.logger import logger
 from src.services.content_guard import (
@@ -14,6 +16,7 @@ from src.services.content_guard import (
     validate_event_content,
     validate_source_bound_content,
 )
+from src.services.structured_fallback import build_structured_parts
 from src.utils.text_utils import (
     clean_twitter_text,
     sanitize_http_header_value,
@@ -116,6 +119,9 @@ PROMPT_VERSION_SOURCE_BOUND = f"event-rewrite-v5+{CONTENT_GUARD_VERSION}"
 _EMOJI_LINE = re.compile(r"^[ \t]*EMOJI:[ \t]*(\S+)", re.MULTILINE)
 _ECHOED_HEADER = re.compile(r"^\S{0,3}\s*Tarihte Bugün\s*\([^)]*\)\s*", re.IGNORECASE)
 _TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
+RATE_LIMIT_WAIT_SECONDS = 50
+RATE_LIMIT_RETRIES = 2
+SOURCE_BOUND_TIME_BUDGET_SECONDS = 240
 
 SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
 
@@ -132,6 +138,9 @@ KESİN KURALLAR
 4. HTML, markdown, madde işareti, açıklama, düşünce notu yazma. Yalnızca istenen biçimi ver.
 5. Yalnızca kaynaktaki sözcükleri kullan. Kaynakta geçmeyen sıfat, betimleme, sahne ayrıntısı ve değerlendirme yazma.
 6. Kaynak özeti "Sağlanmadı." ise yalnızca 1-2 cümlelik yeniden ifade ve bir soru yaz; başka hiçbir şey ekleme.
+7. Yalnızca kaynak cümlelerini yeniden sırala: öne çıkan olguyu başa al. Yeni sıfat, betimleme, sahne, duygu, neden
+   veya sonuç ekleme. Kaynakta geçmeyen bir sözcük kullanma.
+   Yasak örnek: "Bir cami, başka bir çağın izini de taşıyormuş." (çağ, iz, taşımak kaynakta yok.)
 
 NASIL İLGİ ÇEKİCİ YAPARSIN
 - Bölüm 1'in ilk cümlesi okuyucuyu durdurmalı: kaynaktaki en şaşırtıcı, en çarpıcı veya en insani olguyla aç.
@@ -157,6 +166,22 @@ EMOJI: <🕊️|⚔️|🏛️|🔬|🎭|🌍>
 <kapanış sorusu>
 GORSEL_PROMPT: <yalnızca istenirse; kaynakta desteklenen ayrıntılarla, İngilizce>"""
 
+# Few-shot pairs (from strategy/06), adjusted to the source-words-only rule.
+SOURCE_BOUND_FEW_SHOT: tuple[tuple[str, str], ...] = (
+    (
+        "Kaynak olay: İstanbul Zeyrek Camii'nde Bizans dönemi'nden kalma mozaikler bulundu.\n"
+        "Kaynak özeti: Sağlanmadı.\nKaynak zengin mi: hayır",
+        "EMOJI: 🏛️\n---\nBizans dönemi'nden kalma mozaikler, İstanbul Zeyrek Camii'nde bulundu. #tarih\n---\n"
+        "Bu olayı daha önce duymuş muydunuz?",
+    ),
+    (
+        "Kaynak olay: Türkiye Cumhuriyeti kuruldu ve TBMM'deki oylamada Mustafa Kemal Atatürk oy birliğiyle "
+        "ilk cumhurbaşkanı seçildi.\nKaynak özeti: Sağlanmadı.\nKaynak zengin mi: hayır",
+        "EMOJI: 🏛️\n---\nMustafa Kemal Atatürk, TBMM'deki oylamada oy birliğiyle ilk cumhurbaşkanı seçildi; "
+        "Türkiye Cumhuriyeti de kuruldu. #tarih\n---\nBu ayrıntıyı daha önce duymuş muydunuz?",
+    ),
+)
+
 
 class AIService:
     def __init__(self) -> None:
@@ -168,6 +193,8 @@ class AIService:
         self.last_source_fact_status = "not_checked"
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
+        self.last_used_source_sentence: Optional[str] = None
+        self.recent_published_texts: list[str] = []
         self.prompt_version = PROMPT_VERSION_PROFILED
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
@@ -452,6 +479,10 @@ class AIService:
         payload = {
             "messages": [
                 {"role": "system", "content": SOURCE_BOUND_SYSTEM_PROMPT},
+                *[message for pair in SOURCE_BOUND_FEW_SHOT for message in (
+                    {"role": "user", "content": pair[0]},
+                    {"role": "assistant", "content": pair[1]},
+                )],
                 {"role": "user", "content": self._build_source_bound_user_message(request, summary, rich_source)},
             ],
             "stream": False,
@@ -463,14 +494,20 @@ class AIService:
         block_limit = settings.MAX_THREAD_LENGTH - 20
         rejections: list[str] = []
         self.last_validation_reason = None
+        started = time.monotonic()
         async with httpx.AsyncClient(timeout=35.0) as client:
             for attempt, (model, label) in enumerate(cascade, start=1):
+                if time.monotonic() - started > SOURCE_BOUND_TIME_BUDGET_SECONDS:
+                    rejections.append("time_budget")
+                    break
                 try:
-                    payload["model"] = model
-                    response = await client.post(self.url, headers=self.headers, json=payload)
+                    body = {key: value for key, value in payload.items()
+                            if not (key == "reasoning" and model in self._models_without_reasoning())}
+                    body["model"] = model
+                    response = await self._post_with_rate_limit_retries(client, body, model, label, started)
                     if response.status_code != 200:
                         logger.warning(f"{label} Model ({model}) returned HTTP {response.status_code}")
-                        rejections.append("http_error")
+                        rejections.append("rate_limited" if response.status_code == 429 else "http_error")
                         continue
                     result = response.json()
                     choices = result.get("choices") if "error" not in result else None
@@ -520,6 +557,23 @@ class AIService:
         self.last_validation_reason = unique_reasons
         logger.error(f"Source-bound generation failed after {len(cascade)} attempts: {unique_reasons}")
         raise RuntimeError(unique_reasons)
+
+    @staticmethod
+    def _models_without_reasoning() -> set[str]:
+        return {m.strip() for m in settings.MODELS_WITHOUT_REASONING_PARAM.split(",") if m.strip()}
+
+    async def _post_with_rate_limit_retries(self, client, body, model: str, label: str, started: float):
+        """On HTTP 429 wait before retrying the same model, within the per-event time budget."""
+        response = await client.post(self.url, headers=self.headers, json=body)
+        for _ in range(RATE_LIMIT_RETRIES):
+            if response.status_code != 429:
+                break
+            if time.monotonic() - started + RATE_LIMIT_WAIT_SECONDS > SOURCE_BOUND_TIME_BUDGET_SECONDS:
+                break
+            logger.warning(f"{label} Model ({model}) rate-limited; retrying after {RATE_LIMIT_WAIT_SECONDS}s")
+            await asyncio.sleep(RATE_LIMIT_WAIT_SECONDS)
+            response = await client.post(self.url, headers=self.headers, json=body)
+        return response
 
     @staticmethod
     def _build_source_bound_user_message(request: EventRewriteRequest, summary: str, rich_source: bool) -> str:
@@ -672,7 +726,22 @@ class AIService:
         self.last_generation_model = None
         self.last_validation_reason = reason
         self.last_source_fact_status = get_source_fact_status(profile)
+        if profile is None:
+            return self.generate_structured_fallback(request, reason)
         return self.generate_source_fallback(request, reason)
+
+    def generate_structured_fallback(self, request: EventRewriteRequest, reason: str) -> Tuple[List[str], List[str], Optional[str]]:
+        """Code-built output for profile-less events whose model attempts failed; nothing is model-written."""
+        self.last_source_fact_status = get_source_fact_status(None)
+        self.last_language_format_status = "fallback_template"
+        self.last_source_id = request.source_title
+        self.last_source_url = request.source_url
+        parts, used_sentence = build_structured_parts(
+            request, self.recent_published_texts, DEFAULT_EMOJI, settings.MAX_THREAD_LENGTH - 20,
+        )
+        self.last_generation_type = f"source_fallback:{reason}:structured"
+        self.last_used_source_sentence = used_sentence
+        return parts, [], None
 
     def _parse_ai_response(self, content: str, original_text: str, formatted_date: Optional[str] = None):
         """Parses the structured response from AI and deterministically enforces the date header."""

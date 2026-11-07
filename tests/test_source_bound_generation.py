@@ -37,20 +37,24 @@ def _body(*blocks: str, emoji: str = "🏛️") -> str:
     return f"EMOJI: {emoji}\n---\n" + "\n---\n".join(blocks)
 
 
-def _use_fake_models(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[dict[str, object]]:
-    """Each model attempt returns the next scripted content; every request payload is recorded."""
+def _use_scripted_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    script: list[tuple[int, str]],
+    extra: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    """Each HTTP attempt gets the next scripted (status, content); every request body is recorded."""
     monkeypatch.setattr("src.services.ai_service.settings", Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="model-1", BACKUP_MODEL="model-2",
-        TERTIARY_MODEL="model-3", LAST_RESORT_MODEL="model-4",
-        MAX_THREAD_LENGTH=500,
+        TERTIARY_MODEL="model-3", LAST_RESORT_MODEL="model-4", MAX_THREAD_LENGTH=500,
+        **(extra or {}),
     ))
     payloads: list[dict[str, object]] = []
 
     class Response:
-        status_code = 200
-
-        def __init__(self, content: str) -> None:
+        def __init__(self, status: int, content: str) -> None:
+            self.status_code = status
             self._content = content
+            self.text = content
 
         def json(self) -> dict[str, object]:
             return {"model": "scripted", "choices": [{"message": {"content": self._content}}]}
@@ -67,10 +71,16 @@ def _use_fake_models(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> li
 
         async def post(self, url: str, **kwargs: object) -> Response:
             payloads.append(kwargs["json"])
-            return Response(contents[len(payloads) - 1])
+            status, content = script[min(len(payloads) - 1, len(script) - 1)]
+            return Response(status, content)
 
     monkeypatch.setattr("src.services.ai_service.httpx.AsyncClient", Client)
     return payloads
+
+
+def _use_fake_models(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[dict[str, object]]:
+    """Each model attempt returns the next scripted content with HTTP 200."""
+    return _use_scripted_responses(monkeypatch, [(200, content) for content in contents])
 
 
 @pytest.mark.asyncio
@@ -182,8 +192,8 @@ async def test_thin_source_accepts_two_blocks_and_rich_source_accepts_three(
 
     assert len(thin_parts) == 2
     assert len(rich_parts) == 3
-    assert "Kaynak zengin mi: hayır" in payloads[0]["messages"][1]["content"]
-    assert "Kaynak zengin mi: evet" in payloads[1]["messages"][1]["content"]
+    assert "Kaynak zengin mi: hayır" in payloads[0]["messages"][-1]["content"]
+    assert "Kaynak zengin mi: evet" in payloads[1]["messages"][-1]["content"]
 
 
 def test_summary_keeps_anchor_sentences_and_drops_conflicting_years() -> None:
@@ -243,3 +253,94 @@ def test_source_bound_evidence_uses_the_summary_sentences_actually_given_to_the_
 
     assert used[0] == "Ankara Antlaşması, 1921'de TBMM ile Fransa arasında imzalandı."
     assert len(used) == 4
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_model_is_retried_twice_then_next_model_is_tried(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_WAIT_SECONDS", 0)
+    payloads = _use_scripted_responses(monkeypatch, [
+        (429, ""), (429, ""), (429, ""), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION)),
+    ])
+    service = AIService()
+
+    await service.rewrite_event_safe(_request())
+
+    assert [p["model"] for p in payloads] == ["model-1", "model-1", "model-1", "model-2"]
+    assert service.last_generation_type == "ai_source_bound"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_wait_is_between_45_and_60_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.services import ai_service as module
+
+    assert 45 <= module.RATE_LIMIT_WAIT_SECONDS <= 60
+    assert module.RATE_LIMIT_RETRIES == 2
+
+
+@pytest.mark.asyncio
+async def test_reasoning_parameter_is_omitted_only_for_configured_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
+    payloads = _use_scripted_responses(
+        monkeypatch,
+        [(200, bad), (200, bad), (200, bad), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
+        extra={"MODELS_WITHOUT_REASONING_PARAM": "model-4"},
+    )
+
+    await AIService().rewrite_event_safe(_request())
+
+    assert "reasoning" in payloads[0]
+    assert "reasoning" not in payloads[3]
+    assert payloads[3]["model"] == "model-4"
+
+
+@pytest.mark.asyncio
+async def test_time_budget_stops_the_cascade_and_uses_structured_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.services.ai_service.SOURCE_BOUND_TIME_BUDGET_SECONDS", -1)
+    payloads = _use_fake_models(monkeypatch, [_body(GOOD_BLOCK_ONE, GOOD_QUESTION)])
+    service = AIService()
+
+    parts, _, _ = await service.rewrite_event_safe(_request())
+
+    assert payloads == []
+    assert service.last_generation_type.endswith(":structured")
+    assert "time_budget" in service.last_generation_type
+
+
+@pytest.mark.asyncio
+async def test_few_shot_pairs_precede_the_real_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = _use_fake_models(monkeypatch, [_body(GOOD_BLOCK_ONE, GOOD_QUESTION)])
+
+    await AIService().rewrite_event_safe(_request())
+
+    roles = [message["role"] for message in payloads[0]["messages"]]
+    assert roles == ["system", "user", "assistant", "user", "assistant", "user"]
+
+
+@pytest.mark.asyncio
+async def test_all_models_failing_gives_code_built_fallback_without_model_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.services.structured_fallback import FALLBACK_QUESTIONS
+
+    bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
+    _use_fake_models(monkeypatch, [bad, bad, bad, bad])
+    service = AIService()
+
+    parts, _, _ = await service.rewrite_event_safe(_request())
+
+    assert parts[0] == (
+        "🕊️ Tarihte Bugün (20.10.1921)\n\n"
+        "Ankara Antlaşması imzalandı. Ankara Antlaşması, 1921'de TBMM ile Fransa arasında imzalandı. #tarih"
+    )
+    assert parts[1] in FALLBACK_QUESTIONS
+    assert "1923" not in "\n".join(parts)
+    assert "masaya" not in "\n".join(parts)
+    assert service.last_generation_type.startswith("source_fallback:unsupported_number")
+    assert service.last_generation_type.endswith(":structured")
+
+
+def test_fallback_question_bank_has_at_least_five_questions_and_avoids_recent_repeats() -> None:
+    from src.services.structured_fallback import FALLBACK_QUESTIONS, choose_fallback_question
+
+    assert len(FALLBACK_QUESTIONS) >= 5
+    first = choose_fallback_question([])
+    second = choose_fallback_question([f"Bir metin. {first}"])
+    assert second != first

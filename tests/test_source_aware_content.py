@@ -153,12 +153,12 @@ async def test_unprofiled_burak_output_uses_source_fallback_when_models_fail(
 
     rendered = "\n".join(parts)
     assert "19.10.1975" in rendered
-    assert "Kaynak özeti: Burak Güven (19 Ekim 1975" in rendered
+    assert "Burak Güven (19 Ekim 1975" in rendered
     assert "founding" not in rendered.casefold()
     assert "önemli bir yer" not in rendered.casefold()
     assert "sembolik" not in rendered.casefold()
     assert "doğrudan kaynakta yer almamaktadır" not in rendered.casefold()
-    assert service.last_generation_type == "source_fallback:all_models_failed:source_context"
+    assert service.last_generation_type == "source_fallback:all_models_failed:structured"
     assert service.last_source_fact_status == "not_checked"
 
 
@@ -254,12 +254,11 @@ async def test_fallback_uses_only_relevant_bounded_source_context(
 
     parts, _, _ = await service.rewrite_event_safe(request)
 
-    if should_use_context:
-        assert len(parts) == 2
-        assert parts[1].startswith("Kaynak özeti:")
-        assert len(parts[1]) <= 180
-        assert service.last_generation_type.endswith(":source_context")
-        return
-    assert len(parts) == 1
+    from src.services.structured_fallback import FALLBACK_QUESTIONS
+
+    assert len(parts) == 2
+    assert parts[1] in FALLBACK_QUESTIONS
+    assert "Kaynak özeti" not in parts[0]
     assert "Bu paylaşımda" not in parts[0]
-    assert service.last_generation_type.endswith(":thin_source")
+    assert len(parts[0]) <= 180
+    assert service.last_generation_type.endswith(":structured")

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     BACKUP_MODEL: str = "google/gemma-4-31b-it:free"
     TERTIARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
     LAST_RESORT_MODEL: str = "openrouter/free"
+    # Comma-separated models that reject the "reasoning" request parameter (e.g. openrouter/free)
+    MODELS_WITHOUT_REASONING_PARAM: str = "openrouter/free"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

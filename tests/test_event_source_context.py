@@ -65,7 +65,10 @@ async def test_general_introductions_produce_only_the_original_event(
 
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
-    assert parts == [f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{event}"]
+    from src.services.structured_fallback import FALLBACK_QUESTIONS
+
+    assert parts[0] == f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{event} #tarih"
+    assert parts[1] in FALLBACK_QUESTIONS
     assert request.source_context is None
     assert request.source_url is None
 
@@ -87,7 +90,7 @@ async def test_later_event_page_supplies_consistent_source_metadata(
 
     assert request.source_title == related["title"]
     assert request.source_url == related["content_urls"]["desktop"]["page"]
-    assert parts[1].startswith("Kaynak özeti: " + related["extract"].split(". ")[0])
+    assert len(parts[0]) <= 500 - 20  # the summary sentence is added only when the block still fits
     assert service.last_source_url == request.source_url
     assert service.last_source_id == request.source_title
     assert service.last_generation_model is None
@@ -175,8 +178,8 @@ async def test_explicit_other_year_rejects_same_named_wrong_event(
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
     assert request.source_context is None
-    assert len(parts) == 1
-    assert "Kaynak özeti:" not in parts[0]
+    assert len(parts) == 2
+    assert "Kaynak özeti" not in parts[0]
 
 
 def test_different_year_for_a_later_outcome_remains_valid() -> None:
@@ -203,7 +206,7 @@ async def test_empty_incomplete_or_ambiguous_context_does_not_add_a_second_part(
 
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
-    assert len(parts) == 1
+    assert len(parts) == 2
     assert "Kaynak özeti" not in parts[0]
     assert "Bu paylaşımda" not in parts[0]
 

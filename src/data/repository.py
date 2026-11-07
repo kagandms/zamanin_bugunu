@@ -248,6 +248,16 @@ class HistoryRepository:
         )
         return int(result.scalar_one() or 0)
 
+    async def get_recent_published_texts(self, limit: int = 30) -> list[str]:
+        """Recently published texts, newest first; used to avoid repeating fallback questions."""
+        result = await self.session.execute(
+            select(PostHistory.published_text)
+            .where(PostHistory.published_text.is_not(None))
+            .order_by(PostHistory.posted_at.desc())
+            .limit(limit)
+        )
+        return [text for text in result.scalars().all() if text]
+
     async def get_todays_posts(self) -> list[str]:
         """Return today's reserved source texts for same-day candidate deduplication."""
         local_day = datetime.now(ISTANBUL).date()

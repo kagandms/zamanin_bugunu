@@ -32,6 +32,9 @@ class HistoryStub:
     def __init__(self, used: list[str] | None = None) -> None:
         self.used = used or []
 
+    async def get_recent_published_texts(self) -> list[str]:
+        return []
+
     async def get_todays_posts(self) -> list[str]:
         return list(self.used)
 

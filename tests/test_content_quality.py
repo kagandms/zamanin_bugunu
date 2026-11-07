@@ -91,10 +91,13 @@ async def test_unprofiled_fallback_uses_only_the_original_event_without_context(
 
     parts, _, _ = await service.rewrite_event_safe(request)
 
-    assert len(parts) == 1
-    assert parts[0].endswith("Bir karar alındı.")
+    from src.services.structured_fallback import FALLBACK_QUESTIONS
+
+    assert len(parts) == 2
+    assert parts[0].endswith("Bir karar alındı. #tarih")
+    assert parts[1] in FALLBACK_QUESTIONS
     assert "Bu paylaşımda" not in parts[0]
-    assert service.last_generation_type.endswith(":thin_source")
+    assert service.last_generation_type.endswith(":structured")
     assert service.last_source_fact_status == "not_checked"
 
 
@@ -155,6 +158,10 @@ async def test_generic_follow_call_is_not_a_second_threads_part() -> None:
             return None
 
     class History:
+        @staticmethod
+        async def get_recent_published_texts() -> list[str]:
+            return []
+
         @staticmethod
         async def get_todays_posts() -> list[str]:
             return []

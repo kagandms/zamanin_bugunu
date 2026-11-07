@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from src.services.source_context import (
-    SUMMARY_MAX_CHARS, SourceContextInput, _matches, _words, bounded_summary, complete_sentences,
-    normalize_fact_text, relevant_source_sentences,
+    SUMMARY_MAX_CHARS, SourceContextInput, _has_conflicting_sentence_year, _matches, _words, bounded_summary,
+    complete_sentences, normalize_fact_text, relevant_source_sentences,
 )
 
 
@@ -239,8 +239,11 @@ _SENTENCE_BREAK = re.compile(r"[.!?\n:;]+")
 
 
 def source_summary_sentences(request: EventRewriteRequest) -> tuple[str, ...]:
-    """The source summary the model may see: complete sentences, bounded to SUMMARY_MAX_CHARS."""
-    return bounded_summary(complete_sentences(request.source_context or ""), SUMMARY_MAX_CHARS)
+    """The source summary the model may see: complete, year-consistent sentences, bounded to SUMMARY_MAX_CHARS."""
+    evidence = SourceContextInput(request.original_text, request.year, request.source_title, None, request.linked_titles)
+    consistent = [sentence for sentence in complete_sentences(request.source_context or "")
+                  if not _has_conflicting_sentence_year(sentence, evidence)]
+    return bounded_summary(consistent, SUMMARY_MAX_CHARS)
 
 
 def _source_evidence_text(request: EventRewriteRequest) -> str:
