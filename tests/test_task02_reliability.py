@@ -267,7 +267,7 @@ async def test_unprofiled_model_output_is_source_bound_and_not_fact_checked(
         TERTIARY_MODEL="tertiary-model", MAX_THREAD_LENGTH=500,
     ))
     content = (
-        "EMOJI: 🏛️\n---\nMoskova Antlaşması 1921 yılında imzalandı ve bir dönemin kapısını araladı.\n"
+        "EMOJI: 🏛️\n---\nMoskova Antlaşması 1921 yılında imzalandı.\n"
         "---\nBu olayı daha önce duymuş muydunuz?"
     )
 

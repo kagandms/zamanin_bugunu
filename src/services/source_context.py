@@ -202,24 +202,44 @@ def bounded_summary(sentences: Iterable[str], max_chars: int = SUMMARY_MAX_CHARS
     return tuple(selected)
 
 
-def summary_sentences(title: str | None, extract: str, evidence: SourceContextInput) -> tuple[str, ...]:
-    """Sentences for the source-bound summary of one page.
+_GENERIC_LEAD = re.compile(r"\b(?:ulke|halk|sehir|kent|yarimada|ilce|nehir|kita)\w*")
+SUMMARY_TITLE_ROUTE_MIN_CHARS = 100
 
-    Keeps the strictly event-related sentences, plus sentences that mention the
-    page's event anchor (e.g. "Kars" for "Kars Antlaşması"). Sentences with a
-    conflicting event year are always dropped.
-    """
+
+def _title_words(title: str) -> tuple[str, ...]:
+    words = _words(re.sub(r"\([^)]*\)", "", title))
+    return tuple(word for word in words
+                 if len(word) >= 4 and not word.isdigit() and word not in _MONTHS | _STOPWORDS)
+
+
+def _is_generic_lead(extract: str) -> bool:
+    """True when the page opens by defining a broad country, people group, city or region."""
+    sentences = _complete_sentences(extract)
+    return bool(sentences) and _GENERIC_LEAD.search(normalize_fact_text(sentences[0])) is not None
+
+
+def _event_detail_words(event_text: str, title: str | None) -> list[str]:
+    subject = _title_words(title or "")
+    return [word for word in _title_words(event_text) if not _matches(word, list(subject))] if subject else \
+        list(_title_words(event_text))
+
+
+def _page_summary(title: str | None, extract: str, evidence: SourceContextInput) -> tuple[str, ...]:
+    """Page sentences that belong to the event: strictly related, or sharing the event's own anchor or detail."""
+    generic = _is_generic_lead(extract)
     anchors = _title_identity(title or "")
-    anchor_words = anchors[0] if anchors else ()
+    anchor_words = list(anchors[0]) if anchors else []
+    details = [] if generic else _event_detail_words(evidence.event_text, title)
     strict = set(relevant_source_sentences(SourceContextInput(
         evidence.event_text, evidence.year, title, extract, evidence.linked_titles,
     )))
     kept: list[str] = []
     for sentence in _complete_sentences(extract):
-        mentions_anchor = bool(anchor_words) and any(
-            _matches(word, list(anchor_words)) for word in _words(sentence)
-        )
-        if sentence not in strict and not mentions_anchor:
+        words = _words(sentence)
+        shares_anchor = bool(anchor_words) and any(_matches(word, anchor_words) for word in words)
+        # A shared country or common word is not enough; two distinct event details make it event-specific.
+        shares_detail = bool(details) and len({word for word in words if _matches(word, details)}) >= 2
+        if sentence not in strict and not (shares_anchor or shares_detail):
             continue
         if _has_conflicting_sentence_year(sentence, evidence):
             continue
@@ -227,23 +247,46 @@ def summary_sentences(title: str | None, extract: str, evidence: SourceContextIn
     return bounded_summary(kept)
 
 
+def _title_routes_to_event(title: str, extract: str, event_text: str) -> bool:
+    """A page whose own title names the event's subject, and whose lead is not a generic definition."""
+    title_words = _title_words(title)
+    event_words = _title_words(event_text)
+    if not title_words or not event_words or _is_generic_lead(extract):
+        return False
+    return any(_matches(word, list(event_words)) for word in title_words)
+
+
+def summary_sentences(title: str | None, extract: str, evidence: SourceContextInput) -> tuple[str, ...]:
+    """Public helper: the bounded event-related summary of one page."""
+    return _page_summary(title, extract, evidence)
+
+
 def select_event_summary(candidate: Mapping[str, object]) -> SelectedSource | None:
-    """Like select_event_source, but the selected page contributes its bounded summary."""
-    source = select_event_source(candidate)
-    if source is None:
-        return None
+    """Choose the page that best describes the event and return its bounded summary.
+
+    A page qualifies when it has strictly event-related sentences, or when its title names the
+    event's subject, its lead is not a generic definition and its summary is substantial enough.
+    """
     pages = candidate.get("pages") or []
     titles = tuple(str((page.get("titles") or {}).get("canonical") or page.get("title") or "") for page in pages)
-    page = next((
-        page for page in pages
-        if str((page.get("titles") or {}).get("canonical") or page.get("title") or "") == source.title
-        and isinstance(page.get("extract"), str)
-    ), None)
-    if page is None:
-        return source
     year = str(candidate["year"]) if candidate.get("year") is not None else None
-    event = SourceContextInput(str(candidate.get("text") or ""), year, linked_titles=titles)
-    sentences = summary_sentences(source.title, str(page["extract"]), event)
-    if not sentences:
-        return source
-    return replace(source, context=" ".join(sentences))
+    event_text = str(candidate.get("text") or "")
+    event = SourceContextInput(event_text, year, linked_titles=titles)
+    options: list[SelectedSource] = []
+    for page in pages:
+        title = str((page.get("titles") or {}).get("canonical") or page.get("title") or "")
+        extract = page.get("extract")
+        if not title or not isinstance(extract, str) or _has_conflicting_title_year(title, event):
+            continue
+        sentences = _page_summary(title, extract, event)
+        if not sentences:
+            continue
+        page_evidence = SourceContextInput(event_text, year, title, extract, titles)
+        strict = bool(relevant_source_sentences(page_evidence))
+        substantial = len(" ".join(sentences)) >= SUMMARY_TITLE_ROUTE_MIN_CHARS
+        if not strict and not (substantial and _title_routes_to_event(title, extract, event_text)):
+            continue
+        url = ((page.get("content_urls") or {}).get("desktop") or {}).get("page")
+        specificity = int(_title_identity(title) in _event_identities(page_evidence))
+        options.append(SelectedSource(title, url if isinstance(url, str) else None, " ".join(sentences), specificity))
+    return max(options, key=lambda source: (source.specificity, len(source.context)), default=None)

@@ -130,6 +130,8 @@ KESİN KURALLAR
    Birden fazla taraf varsa "kimine göre … kimine göre …" gibi dengeli yaz; yalnızca kaynakta varsa.
 3. Başlık yazma, tarih başlığı ekleme, takip çağrısı yazma. Bunları sistem ekler.
 4. HTML, markdown, madde işareti, açıklama, düşünce notu yazma. Yalnızca istenen biçimi ver.
+5. Yalnızca kaynaktaki sözcükleri kullan. Kaynakta geçmeyen sıfat, betimleme, sahne ayrıntısı ve değerlendirme yazma.
+6. Kaynak özeti "Sağlanmadı." ise yalnızca 1-2 cümlelik yeniden ifade ve bir soru yaz; başka hiçbir şey ekleme.
 
 NASIL İLGİ ÇEKİCİ YAPARSIN
 - Bölüm 1'in ilk cümlesi okuyucuyu durdurmalı: kaynaktaki en şaşırtıcı, en çarpıcı veya en insani olguyla aç.
@@ -453,7 +455,7 @@ class AIService:
                 {"role": "user", "content": self._build_source_bound_user_message(request, summary, rich_source)},
             ],
             "stream": False,
-            "temperature": 0.5,
+            "temperature": 0.25,
             "max_tokens": 1200,
             "reasoning": {"effort": "none"},
         }
@@ -487,6 +489,7 @@ class AIService:
                     emoji_line_present, emoji, blocks, image_prompt = self._parse_source_bound_response(content)
                     reasons = list(validate_source_bound_content(
                         blocks, request, emoji_line_present, max_block_chars=block_limit,
+                        summary_present=bool(summary),
                     ))
                     if not self._has_turkish_vocabulary("\n".join(blocks)):
                         reasons.append("language")

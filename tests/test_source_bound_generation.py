@@ -18,7 +18,7 @@ RICH_SUMMARY = (
     "Ankara Antlaşması, Türk-Fransız Cephesi'ndeki faaliyetleri durdurmuştur. "
     "Sınırın kesin çizgisi ise daha sonraki bir düzenlemeye bırakılmıştır."
 )
-GOOD_BLOCK_ONE = "1921'de TBMM ile Fransa arasında imzalanan Ankara Antlaşması, masadaki bir kararı belgeye dönüştürdü."
+GOOD_BLOCK_ONE = "1921'de TBMM ile Fransa arasında imzalanan Ankara Antlaşması, bu tarihte imzalandı."
 GOOD_QUESTION = "Bu olayı daha önce duymuş muydunuz?"
 
 
@@ -120,16 +120,15 @@ async def test_all_models_failing_validation_falls_back_to_source(monkeypatch: p
     assert "1923" not in "\n".join(parts)
 
 
-@pytest.mark.parametrize("block_one", [
-    "Bu korkunç bir olay 1921'de TBMM ile Fransa arasında imzalandı.",
-    "Ankara Antlaşması 1921'de ilk kez imzalandı ve TBMM ile Fransa arasında bir karar oldu.",
-    "Ailenizde bu anlaşmayı hatırlayan var mı, 1921'de TBMM ile Fransa arasında imzalandı?",
-    "Takip edin ve 1921'de TBMM ile Fransa arasında imzalanan Ankara Antlaşması'nı öğrenin.",
+@pytest.mark.parametrize(("block_one", "accepted"), [
+    ("Ankara Antlaşması 1921'de TBMM ile Fransa arasında imzalandı.", True),
+    ("Buzlu bir sabahta, sessizce ve nadir bir tesadüfle, 1921'de TBMM ile Fransa arasında imzalandı.", False),
+    ("Bu tartışmalı ve korkunç olay, ülke tarihindeki en çarpıcı anlaşmaydı; 1921'de imzalandı.", False),
 ])
-def test_banned_phrases_are_rejected(block_one: str) -> None:
+def test_unsupported_word_roots_are_rejected_beyond_two(block_one: str, accepted: bool) -> None:
     reasons = validate_source_bound_content([block_one, GOOD_QUESTION], _request(), True, 480)
 
-    assert "banned_phrase" in reasons
+    assert ("unsupported_words" not in reasons) is accepted
 
 
 def test_unsupported_name_is_rejected() -> None:

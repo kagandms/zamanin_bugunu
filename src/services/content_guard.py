@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from src.services.source_context import (
-    SUMMARY_MAX_CHARS, SourceContextInput, bounded_summary, complete_sentences,
+    SUMMARY_MAX_CHARS, SourceContextInput, _matches, _words, bounded_summary, complete_sentences,
     normalize_fact_text, relevant_source_sentences,
 )
 
@@ -220,20 +220,16 @@ def _is_supported_year_context(sentence: str, year: str) -> bool:
 # --- Source-bound generation (profile-less events, prompt event-rewrite-v5) ---
 
 _SOURCE_BOUND_NUMBER_WORDS = ("iki", "dort", "bes", "alti", "yedi", "sekiz", "dokuz", "bin", "milyon")
-_SOURCE_BOUND_VALUE_WORDS = (
-    "vahim", "kahraman", "hain", "korkunc", "utanc", "rezalet", "dehset", "muhtesem", "inanilmaz",
+# Function words, question frames and generic framing that may appear without being in the source.
+_ALLOWED_EXACT_WORDS = {
+    "bu", "bir", "ve", "ile", "icin", "olan", "olarak", "gibi", "daha", "once", "sonra", "ama", "ise",
+    "veya", "hem", "ya", "da", "de", "ki", "kadar", "yani", "cok", "sadece", "mi", "mu", "misin", "misiniz",
+    "yil", "yilinda", "gun", "ne", "her", "bunu", "bunun", "yok", "var",
+}
+_ALLOWED_WORD_PREFIXES = (
+    "olay", "sizce", "bugun", "muydu", "duymus", "biliyor", "nasil", "okuy", "dusun", "hatirl", "tarih",
 )
-_SOURCE_BOUND_BANNED_PATTERNS = (
-    re.compile(r"\bilk kez\b"),
-    re.compile(r"\bilk defa\b"),
-    re.compile(r"\ben buyuk\b"),
-    re.compile(r"\btek\b"),
-    re.compile(r"\bdogru muydu\b"),
-    re.compile(r"\byanlis miydi\b"),
-    re.compile(r"(?:^|[.!?\n]\s*)ailenizde\b"),
-    re.compile(r"\b(?:begenin|takip edin|yorum yap\w*|abone olun|paylasin)\b"),
-    re.compile(r"\b(?:" + "|".join(_SOURCE_BOUND_VALUE_WORDS) + r")\w*"),
-)
+_MAX_UNSUPPORTED_ROOTS = 2
 _SOURCE_BOUND_NON_NAMES = {"bugun", "tarihte", "tarih"} | {
     "ocak", "subat", "mart", "nisan", "mayis", "haziran", "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik",
 }
@@ -283,18 +279,28 @@ def _unsupported_names(text: str, evidence: str) -> bool:
     return False
 
 
-def _unsupported_banned_phrase(text: str, evidence: str) -> bool:
-    normalized_text = normalize_fact_text(text)
-    normalized_evidence = normalize_fact_text(evidence)
-    for pattern in _SOURCE_BOUND_BANNED_PATTERNS:
-        if pattern.search(normalized_text) and not pattern.search(normalized_evidence):
-            return True
-    return False
+def _unsupported_roots(text: str, evidence: str) -> set[str]:
+    """Distinct 5-letter roots of meaningful words that appear neither in the source nor in the allowlist."""
+    evidence_words = _words(evidence)
+    roots: set[str] = set()
+    for word in _words(text):
+        if len(word) < 3 or word in _ALLOWED_EXACT_WORDS or word.startswith(_ALLOWED_WORD_PREFIXES):
+            continue
+        if not _matches(word, evidence_words):
+            roots.add(word[:5])
+    return roots
 
 
-def _format_problem(blocks: list[str], emoji_line_present: bool) -> bool:
-    if not emoji_line_present or not 2 <= len(blocks) <= 3:
+def _format_problem(blocks: list[str], emoji_line_present: bool, summary_present: bool) -> bool:
+    if not emoji_line_present:
         return True
+    if summary_present:
+        if not 2 <= len(blocks) <= 3:
+            return True
+    else:
+        # Without a source summary the model may only restate the event in 1-2 sentences plus a question.
+        if len(blocks) != 2 or len([x for x in _SENTENCE_BREAK.split(blocks[0]) if x.strip()]) > 2:
+            return True
     if any(len(block.strip()) < 20 for block in blocks):
         return True
     return not normalize_fact_text(blocks[-1].rstrip()).endswith("?")
@@ -305,14 +311,15 @@ def validate_source_bound_content(
     request: EventRewriteRequest,
     emoji_line_present: bool,
     max_block_chars: int,
+    summary_present: bool = True,
 ) -> tuple[str, ...]:
-    """Automatic checks for model output that is grounded in the event sentence and source summary only.
+    """Automatic checks for model output grounded in the event sentence and source summary.
 
     Blocks are the model's body sections (no code-made header, no footer). Reasons are short codes so
     the caller can log why a candidate was rejected.
     """
     reasons: list[str] = []
-    if _format_problem(blocks, emoji_line_present):
+    if _format_problem(blocks, emoji_line_present, summary_present):
         reasons.append("format")
     if any(len(block) > max_block_chars for block in blocks):
         reasons.append("length")
@@ -322,6 +329,6 @@ def validate_source_bound_content(
         reasons.append("unsupported_number")
     if _unsupported_names(text, evidence):
         reasons.append("unsupported_name")
-    if _unsupported_banned_phrase(text, evidence):
-        reasons.append("banned_phrase")
+    if len(_unsupported_roots(text, evidence)) > _MAX_UNSUPPORTED_ROOTS:
+        reasons.append("unsupported_words")
     return tuple(reasons)

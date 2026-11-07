@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: Optional[SecretStr] = None
     # Free-model cascade, tried in this order (no paid models). Override via env/.env.
-    AI_MODEL: str = "google/gemma-4-31b-it:free"
-    BACKUP_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    AI_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    BACKUP_MODEL: str = "google/gemma-4-31b-it:free"
     TERTIARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
     LAST_RESORT_MODEL: str = "openrouter/free"
     

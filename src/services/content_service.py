@@ -33,6 +33,7 @@ class CategoryFetchResult:
     attempts: int
     retry_after_seconds: float | None = None
     fetched_at: datetime | None = None
+from src.services.content_guard import SOURCE_RICH_MIN_CHARS
 from src.services.source_context import select_event_source, select_event_summary
 
 TOPIC_KEYWORDS = {
@@ -205,6 +206,11 @@ class ContentService:
             score -= 10
 
         return score
+
+    @staticmethod
+    def _summary_length(item: dict) -> int:
+        source = select_event_summary(item)
+        return len(source.context) if source else 0
 
     @staticmethod
     def _source_context_score(item: dict) -> int:
@@ -446,6 +452,11 @@ class ContentService:
         if not candidates:
             return None
 
+        # Prefer candidates whose linked page gives the model a substantial summary; if none has one, keep the full pool.
+        rich = [i for i in candidates if self._summary_length(i) >= SOURCE_RICH_MIN_CHARS]
+        if rich:
+            logger.info(f"Event pool narrowed to {len(rich)} candidates with source summaries >= {SOURCE_RICH_MIN_CHARS} chars")
+            candidates = rich
         pool = candidates
         turkish_count = sum(1 for i in pool if self._is_turkish(i.get('text', '')))
         logger.info(f"Event pool: {len(pool)} total ({turkish_count} Turkish, {len(pool) - turkish_count} Global)")
