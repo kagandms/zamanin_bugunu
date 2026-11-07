@@ -20,13 +20,14 @@ class Settings(BaseSettings):
     
     # AI Provider (OpenRouter)
     OPENROUTER_API_KEY: Optional[SecretStr] = None
-    # Free-model cascade, tried in this order (no paid models). Override via env/.env.
+    # Free-model cascade for source-bound generation (Gemini first when GEMINI_API_KEY is set).
     AI_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     BACKUP_MODEL: str = "google/gemma-4-31b-it:free"
-    TERTIARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
-    LAST_RESORT_MODEL: str = "openrouter/free"
-    # Comma-separated models that reject the "reasoning" request parameter (e.g. openrouter/free)
-    MODELS_WITHOUT_REASONING_PARAM: str = "openrouter/free"
+    # Comma-separated models that reject the "reasoning" request parameter
+    MODELS_WITHOUT_REASONING_PARAM: str = ""
+    # Google AI Studio (Gemini). Key is read from GEMINI_API_KEY; without it the provider is skipped.
+    GEMINI_API_KEY: Optional[SecretStr] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

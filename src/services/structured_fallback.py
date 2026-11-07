@@ -5,25 +5,42 @@ summary sentence are copied verbatim from the source, and the closing question c
 """
 from __future__ import annotations
 
+import re
+
 from src.services.content_guard import EventRewriteRequest, source_summary_sentences
 from src.services.source_context import _matches, _words, normalize_fact_text
 
-FALLBACK_QUESTIONS: tuple[str, ...] = (
-    "Bu olayı daha önce duymuş muydunuz?",
+EVENT_QUESTIONS: tuple[str, ...] = (
+    "Bu ayrıntıyı daha önce duymuş muydunuz?",
     "Bu olayı bugün nasıl okuyorsunuz?",
-    "Bu tarihte olanlar hakkında ne düşünüyorsunuz?",
     "Bu olayın izlerini bugün hâlâ görmek mümkün mü?",
     "Bu konuda daha önce bir bilginiz var mıydı?",
     "Sizce bu olay tarih kitaplarında nasıl anlatılıyor?",
 )
+PERSON_QUESTIONS: tuple[str, ...] = (
+    "Bu ismi tanıyor muydunuz?",
+    "Bu kişiyi daha önce duymuş muydunuz?",
+    "Bu isim hakkında ne biliyorsunuz?",
+)
+FALLBACK_QUESTIONS: tuple[str, ...] = EVENT_QUESTIONS + PERSON_QUESTIONS
+_MIN_NEW_WORDS = 2  # a summary sentence must add at least this many meaningful words the event lacks
 _STOP = {"bir", "ile", "olan", "olarak", "hakkinda", "bilgi", "ve", "bu", "icin", "daha", "kadar", "gibi"}
 
 
-def choose_fallback_question(recent_texts: list[str] | tuple[str, ...]) -> str:
-    """The least-used question in recent published texts; first in bank order on ties."""
+_PERSON_EVENT = re.compile(r"\((?:d|ö)\.\s*\d|doğdu|öldü|hayatını kaybet", re.IGNORECASE)
+
+
+def event_kind(event_text: str) -> str:
+    """'person' for birth/death records, otherwise 'event' (battles, treaties, decisions, etc.)."""
+    return "person" if _PERSON_EVENT.search(event_text or "") else "event"
+
+
+def choose_fallback_question(recent_texts: list[str] | tuple[str, ...], event_text: str = "") -> str:
+    """The least-used question of the event's kind in recent published texts; bank order on ties."""
+    bank = PERSON_QUESTIONS if event_kind(event_text) == "person" else EVENT_QUESTIONS
     recent = normalize_fact_text("\n".join(recent_texts))
-    counts = [recent.count(normalize_fact_text(question.rstrip("?"))) for question in FALLBACK_QUESTIONS]
-    return FALLBACK_QUESTIONS[counts.index(min(counts))]
+    counts = [recent.count(normalize_fact_text(question.rstrip("?"))) for question in bank]
+    return bank[counts.index(min(counts))]
 
 
 def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | None:
@@ -34,8 +51,14 @@ def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | 
     for sentence in sentences:
         if normalize_fact_text(sentence).strip(" .") == event_norm:
             continue
-        overlap = len({word for word in _words(sentence) if _matches(word, event_words)})
-        if overlap >= 1 and (best is None or overlap > best[0]):
+        sentence_words = [word for word in _words(sentence) if len(word) >= 4 and word not in _STOP]
+        matched = [word for word in sentence_words if _matches(word, event_words)]
+        new_words = [word for word in sentence_words if not _matches(word, event_words)]
+        if not matched or len(new_words) < _MIN_NEW_WORDS:
+            # No event link, or the sentence only repeats what the event already says.
+            continue
+        overlap = len(set(matched))
+        if best is None or overlap > best[0]:
             best = (overlap, sentence)
     return best[1] if best else None
 
@@ -59,4 +82,4 @@ def build_structured_parts(
         first = f"{header}\n\n{event} #tarih"
     if len(first) > block_limit:
         first = first[:block_limit - 3].rstrip() + "..."
-    return [first, choose_fallback_question(recent_texts)], best
+    return [first, choose_fallback_question(recent_texts, request.original_text)], best

@@ -212,7 +212,7 @@ async def test_model_guard_tries_two_candidates_then_uses_source_fallback(monkey
 
     settings = Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="first-model", BACKUP_MODEL="second-model",
-        TERTIARY_MODEL="third-model", LAST_RESORT_MODEL="fourth-model",
+        
     )
     monkeypatch.setattr("src.services.ai_service.settings", settings)
     requests: list[dict[str, object]] = []
@@ -264,7 +264,7 @@ async def test_unprofiled_model_output_is_source_bound_and_not_fact_checked(
 
     monkeypatch.setattr("src.services.ai_service.settings", Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="mock-model", BACKUP_MODEL="backup-model",
-        TERTIARY_MODEL="tertiary-model", MAX_THREAD_LENGTH=500,
+        MAX_THREAD_LENGTH=500,
     ))
     content = (
         "EMOJI: 🏛️\n---\nMoskova Antlaşması 1921 yılında imzalandı.\n"

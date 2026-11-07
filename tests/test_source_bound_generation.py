@@ -37,18 +37,23 @@ def _body(*blocks: str, emoji: str = "🏛️") -> str:
     return f"EMOJI: {emoji}\n---\n" + "\n---\n".join(blocks)
 
 
+LAST_REQUESTS: list[dict[str, object]] = []
+
+
 def _use_scripted_responses(
     monkeypatch: pytest.MonkeyPatch,
     script: list[tuple[int, str]],
     extra: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Each HTTP attempt gets the next scripted (status, content); every request body is recorded."""
-    monkeypatch.setattr("src.services.ai_service.settings", Settings(
-        OPENROUTER_API_KEY="mock-key", AI_MODEL="model-1", BACKUP_MODEL="model-2",
-        TERTIARY_MODEL="model-3", LAST_RESORT_MODEL="model-4", MAX_THREAD_LENGTH=500,
-        **(extra or {}),
-    ))
+    settings_kwargs: dict[str, object] = {
+        "OPENROUTER_API_KEY": "mock-key", "AI_MODEL": "model-1", "BACKUP_MODEL": "model-2",
+        "GEMINI_API_KEY": None, "MAX_THREAD_LENGTH": 500,
+    }
+    settings_kwargs.update(extra or {})
+    monkeypatch.setattr("src.services.ai_service.settings", Settings(**settings_kwargs))
     payloads: list[dict[str, object]] = []
+    LAST_REQUESTS.clear()
 
     class Response:
         def __init__(self, status: int, content: str) -> None:
@@ -57,7 +62,11 @@ def _use_scripted_responses(
             self.text = content
 
         def json(self) -> dict[str, object]:
-            return {"model": "scripted", "choices": [{"message": {"content": self._content}}]}
+            return {
+                "model": "scripted", "modelVersion": "scripted-gemini",
+                "choices": [{"message": {"content": self._content}}],
+                "candidates": [{"content": {"parts": [{"text": self._content}]}}],
+            }
 
     class Client:
         def __init__(self, **kwargs: object) -> None:
@@ -71,6 +80,7 @@ def _use_scripted_responses(
 
         async def post(self, url: str, **kwargs: object) -> Response:
             payloads.append(kwargs["json"])
+            LAST_REQUESTS.append({"url": url, "headers": kwargs.get("headers", {})})
             status, content = script[min(len(payloads) - 1, len(script) - 1)]
             return Response(status, content)
 
@@ -120,12 +130,12 @@ async def test_unsupported_year_is_rejected_and_next_model_is_tried(monkeypatch:
 @pytest.mark.asyncio
 async def test_all_models_failing_validation_falls_back_to_source(monkeypatch: pytest.MonkeyPatch) -> None:
     bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
-    payloads = _use_fake_models(monkeypatch, [bad, bad, bad, bad])
+    payloads = _use_fake_models(monkeypatch, [bad, bad])
     service = AIService()
 
     parts, _, _ = await service.rewrite_event_safe(_request())
 
-    assert len(payloads) == 4
+    assert len(payloads) == 2
     assert service.last_generation_type.startswith("source_fallback:unsupported_number")
     assert "1923" not in "\n".join(parts)
 
@@ -256,8 +266,8 @@ def test_source_bound_evidence_uses_the_summary_sentences_actually_given_to_the_
 
 
 @pytest.mark.asyncio
-async def test_rate_limited_model_is_retried_twice_then_next_model_is_tried(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_WAIT_SECONDS", 0)
+async def test_rate_limited_model_is_retried_in_the_same_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_BACKOFF_SECONDS", 0)
     payloads = _use_scripted_responses(monkeypatch, [
         (429, ""), (429, ""), (429, ""), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION)),
     ])
@@ -265,16 +275,15 @@ async def test_rate_limited_model_is_retried_twice_then_next_model_is_tried(monk
 
     await service.rewrite_event_safe(_request())
 
-    assert [p["model"] for p in payloads] == ["model-1", "model-1", "model-1", "model-2"]
+    assert [p["model"] for p in payloads] == ["model-1"] * 4
     assert service.last_generation_type == "ai_source_bound"
 
 
-@pytest.mark.asyncio
-async def test_rate_limit_wait_is_between_45_and_60_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_time_budget_is_about_ninety_seconds() -> None:
     from src.services import ai_service as module
 
-    assert 45 <= module.RATE_LIMIT_WAIT_SECONDS <= 60
-    assert module.RATE_LIMIT_RETRIES == 2
+    assert module.SOURCE_BOUND_TIME_BUDGET_SECONDS == 90
+    assert module.RATE_LIMIT_BACKOFF_SECONDS == 5
 
 
 @pytest.mark.asyncio
@@ -282,15 +291,15 @@ async def test_reasoning_parameter_is_omitted_only_for_configured_models(monkeyp
     bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
     payloads = _use_scripted_responses(
         monkeypatch,
-        [(200, bad), (200, bad), (200, bad), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
-        extra={"MODELS_WITHOUT_REASONING_PARAM": "model-4"},
+        [(200, bad), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
+        extra={"MODELS_WITHOUT_REASONING_PARAM": "model-2"},
     )
 
     await AIService().rewrite_event_safe(_request())
 
     assert "reasoning" in payloads[0]
-    assert "reasoning" not in payloads[3]
-    assert payloads[3]["model"] == "model-4"
+    assert "reasoning" not in payloads[1]
+    assert payloads[1]["model"] == "model-2"
 
 
 @pytest.mark.asyncio
@@ -321,7 +330,7 @@ async def test_all_models_failing_gives_code_built_fallback_without_model_text(m
     from src.services.structured_fallback import FALLBACK_QUESTIONS
 
     bad = _body("Ankara Antlaşması 1923 yılında imzalandı ve masaya bir karar getirdi.", GOOD_QUESTION)
-    _use_fake_models(monkeypatch, [bad, bad, bad, bad])
+    _use_fake_models(monkeypatch, [bad, bad])
     service = AIService()
 
     parts, _, _ = await service.rewrite_event_safe(_request())
@@ -344,3 +353,65 @@ def test_fallback_question_bank_has_at_least_five_questions_and_avoids_recent_re
     first = choose_fallback_question([])
     second = choose_fallback_question([f"Bir metin. {first}"])
     assert second != first
+
+
+def test_gemini_is_skipped_when_key_is_absent() -> None:
+    service = AIService()
+    service.api_key = "openrouter-key"
+    settings_without_gemini = Settings(OPENROUTER_API_KEY="openrouter-key", GEMINI_API_KEY=None)
+    import src.services.ai_service as module
+
+    original = module.settings
+    module.settings = settings_without_gemini
+    try:
+        providers = [provider for provider, _, _ in service._source_bound_cascade()]
+    finally:
+        module.settings = original
+    assert "gemini" not in providers
+    assert providers == ["openrouter", "openrouter"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_is_first_when_configured_and_key_stays_out_of_url_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    key = "test-gemini-key-value"
+    payloads = _use_scripted_responses(
+        monkeypatch,
+        [(200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
+        extra={"GEMINI_API_KEY": key, "GEMINI_MODEL": "gemini-test-model"},
+    )
+    service = AIService()
+
+    await service.rewrite_event_safe(_request())
+
+    assert LAST_REQUESTS[0]["url"].endswith("/gemini-test-model:generateContent")
+    assert LAST_REQUESTS[0]["headers"]["x-goog-api-key"] == key
+    assert key not in LAST_REQUESTS[0]["url"]
+    assert key not in str(payloads[0])
+    assert service.last_generation_model == "scripted-gemini"
+    assert service.last_generation_type == "ai_source_bound"
+    assert payloads[0]["systemInstruction"]["parts"][0]["text"].startswith("Sen Türkçe")
+
+
+def test_fallback_questions_cover_event_and_person_kinds_with_rotation() -> None:
+    from src.services.structured_fallback import (
+        EVENT_QUESTIONS, FALLBACK_QUESTIONS, PERSON_QUESTIONS, choose_fallback_question, event_kind,
+    )
+
+    assert len(FALLBACK_QUESTIONS) >= 8
+    assert event_kind("Kâzım Koyuncu, Türk müzisyen (ö. 2005)") == "person"
+    assert event_kind("Türk ordusu, Gümrü'yü ele geçirdi.") == "event"
+    assert choose_fallback_question([], "Kâzım Koyuncu, Türk müzisyen (ö. 2005)") in PERSON_QUESTIONS
+    first = choose_fallback_question([], "Türk ordusu, Gümrü'yü ele geçirdi.")
+    assert first in EVENT_QUESTIONS
+    assert choose_fallback_question([f"Metin. {first}"], "Türk ordusu, Gümrü'yü ele geçirdi.") != first
+
+
+def test_summary_sentence_that_repeats_the_event_is_dropped() -> None:
+    from src.services.structured_fallback import best_overlap_sentence
+
+    event = "Türk ordusu, Gümrü'yü ele geçirdi."
+    repeats = "Türk ordusu Gümrü'yü ele geçirdi."
+    adds = "Gümrü, Ermenistan sınırına yakın bir şehirdi."
+
+    assert best_overlap_sentence(event, (repeats,)) is None
+    assert best_overlap_sentence(event, (repeats, adds)) == adds

@@ -191,7 +191,9 @@ async def test_unprofiled_fallback_preserves_source_supported_member_distinction
 
     parts, _, _ = await service.rewrite_event_safe(request)
 
-    assert expected_context in "\n".join(parts)
+    # A summary sentence that only repeats the event is left out; one that adds a fact is kept.
+    rendered = "\n".join(parts)
+    assert (expected_context in rendered) == ("kurucu" in source_context)
 
 
 @pytest.mark.asyncio

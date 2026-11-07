@@ -119,9 +119,9 @@ PROMPT_VERSION_SOURCE_BOUND = f"event-rewrite-v5+{CONTENT_GUARD_VERSION}"
 _EMOJI_LINE = re.compile(r"^[ \t]*EMOJI:[ \t]*(\S+)", re.MULTILINE)
 _ECHOED_HEADER = re.compile(r"^\S{0,3}\s*Tarihte Bugün\s*\([^)]*\)\s*", re.IGNORECASE)
 _TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
-RATE_LIMIT_WAIT_SECONDS = 50
-RATE_LIMIT_RETRIES = 2
-SOURCE_BOUND_TIME_BUDGET_SECONDS = 240
+RATE_LIMIT_BACKOFF_SECONDS = 5
+SOURCE_BOUND_TIME_BUDGET_SECONDS = 90
+GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 
 SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
 
@@ -460,65 +460,135 @@ class AIService:
 
     @staticmethod
     def _model_cascade() -> List[Tuple[str, str]]:
-        """Ordered (model id, label) pairs from settings only; no model ids live in code."""
+        """Profiled events: the first two models of the OpenRouter cascade."""
         return [
             (settings.AI_MODEL, "Primary"),
             (settings.BACKUP_MODEL, "Secondary"),
-            (settings.TERTIARY_MODEL, "Tertiary"),
-            (settings.LAST_RESORT_MODEL, "Last resort"),
         ]
+
+    def _gemini_api_key(self) -> str:
+        key = settings.GEMINI_API_KEY
+        return key.get_secret_value() if key else ""
+
+    def _source_bound_cascade(self) -> List[Tuple[str, str, str]]:
+        """(provider, model, label) in order: Gemini (if configured), then the OpenRouter free models."""
+        cascade: List[Tuple[str, str, str]] = []
+        if self._gemini_api_key():
+            cascade.append(("gemini", settings.GEMINI_MODEL, "Gemini"))
+        if self.api_key:
+            cascade.append(("openrouter", settings.AI_MODEL, "Primary"))
+            cascade.append(("openrouter", settings.BACKUP_MODEL, "Secondary"))
+        return cascade
+
+    @staticmethod
+    def _models_without_reasoning() -> set[str]:
+        return {m.strip() for m in settings.MODELS_WITHOUT_REASONING_PARAM.split(",") if m.strip()}
+
+    def _openrouter_body(self, model: str, messages: list[dict[str, str]], base: dict[str, object]) -> dict[str, object]:
+        body = {key: value for key, value in base.items() if key != "reasoning" or model not in self._models_without_reasoning()}
+        body["messages"] = messages
+        body["model"] = model
+        return body
+
+    def _gemini_request(self, model: str, messages: list[dict[str, str]]) -> tuple[str, dict[str, str], dict[str, object]]:
+        """Google AI Studio generateContent. The key goes in a header, never in the URL."""
+        system_text = messages[0]["content"]
+        contents = [
+            {"role": "model" if message["role"] == "assistant" else "user", "parts": [{"text": message["content"]}]}
+            for message in messages[1:]
+        ]
+        url = f"{GEMINI_ENDPOINT}/{model}:generateContent"
+        headers = {"Content-Type": "application/json", "x-goog-api-key": self._gemini_api_key()}
+        body = {
+            "systemInstruction": {"parts": [{"text": system_text}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.25, "maxOutputTokens": 1200},
+        }
+        return url, headers, body
+
+    @staticmethod
+    def _gemini_text(result: dict[str, object]) -> Optional[str]:
+        candidates = result.get("candidates") or []
+        if not candidates or not isinstance(candidates[0], dict):
+            return None
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+        return text or None
+
+    async def _call_with_backoff(
+        self, client, provider: str, model: str, messages: list[dict[str, str]],
+        base: dict[str, object], deadline: float, label: str,
+    ) -> tuple[int, Optional[str], Optional[str]]:
+        """One model, retried on HTTP 429 after a short backoff until this model's time share ends."""
+        while True:
+            if provider == "gemini":
+                url, headers, body = self._gemini_request(model, messages)
+            else:
+                url, headers, body = self.url, self.headers, self._openrouter_body(model, messages, base)
+            response = await client.post(url, headers=headers, json=body)
+            if response.status_code != 429:
+                break
+            if time.monotonic() + RATE_LIMIT_BACKOFF_SECONDS > deadline:
+                break
+            logger.warning(f"{label} Model ({model}) rate-limited; retrying after {RATE_LIMIT_BACKOFF_SECONDS}s")
+            await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+        if response.status_code != 200:
+            return response.status_code, None, None
+        result = response.json()
+        if provider == "gemini":
+            return 200, self._gemini_text(result), result.get("modelVersion") or model
+        if "error" in result:
+            return 200, None, None
+        choices = result.get("choices")
+        if not choices or not choices[0].get("message"):
+            return 200, None, None
+        raw = choices[0]["message"].get("content")
+        if not raw or not isinstance(raw, str):
+            return 200, None, None
+        return 200, raw, result.get("model") or model
 
     async def _rewrite_source_bound(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Interpret the event sentence and its source summary; no curated facts are required."""
-        if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
+        cascade = self._source_bound_cascade()
+        if not cascade:
+            raise ValueError("No AI provider configured (OPENROUTER_API_KEY or GEMINI_API_KEY).")
         summary = " ".join(source_summary_sentences(request))
         rich_source = len(summary) >= SOURCE_RICH_MIN_CHARS
         self.last_source_fact_status = get_source_fact_status(None)
         self.last_language_format_status = "unknown"
-        payload = {
-            "messages": [
-                {"role": "system", "content": SOURCE_BOUND_SYSTEM_PROMPT},
-                *[message for pair in SOURCE_BOUND_FEW_SHOT for message in (
-                    {"role": "user", "content": pair[0]},
-                    {"role": "assistant", "content": pair[1]},
-                )],
-                {"role": "user", "content": self._build_source_bound_user_message(request, summary, rich_source)},
-            ],
-            "stream": False,
-            "temperature": 0.25,
-            "max_tokens": 1200,
-            "reasoning": {"effort": "none"},
-        }
-        cascade = self._model_cascade()
+        messages = [
+            {"role": "system", "content": SOURCE_BOUND_SYSTEM_PROMPT},
+            *[message for pair in SOURCE_BOUND_FEW_SHOT for message in (
+                {"role": "user", "content": pair[0]},
+                {"role": "assistant", "content": pair[1]},
+            )],
+            {"role": "user", "content": self._build_source_bound_user_message(request, summary, rich_source)},
+        ]
+        base = {"stream": False, "temperature": 0.25, "max_tokens": 1200, "reasoning": {"effort": "none"}}
         block_limit = settings.MAX_THREAD_LENGTH - 20
         rejections: list[str] = []
         self.last_validation_reason = None
         started = time.monotonic()
         async with httpx.AsyncClient(timeout=35.0) as client:
-            for attempt, (model, label) in enumerate(cascade, start=1):
+            for attempt, (provider, model, label) in enumerate(cascade, start=1):
                 if time.monotonic() - started > SOURCE_BOUND_TIME_BUDGET_SECONDS:
                     rejections.append("time_budget")
                     break
                 try:
-                    body = {key: value for key, value in payload.items()
-                            if not (key == "reasoning" and model in self._models_without_reasoning())}
-                    body["model"] = model
-                    response = await self._post_with_rate_limit_retries(client, body, model, label, started)
-                    if response.status_code != 200:
-                        logger.warning(f"{label} Model ({model}) returned HTTP {response.status_code}")
-                        rejections.append("rate_limited" if response.status_code == 429 else "http_error")
+                    # Each provider gets an equal share of the event's model time budget.
+                    share = SOURCE_BOUND_TIME_BUDGET_SECONDS / len(cascade)
+                    deadline = min(time.monotonic() + share, started + SOURCE_BOUND_TIME_BUDGET_SECONDS)
+                    status, raw_text, responded_model = await self._call_with_backoff(
+                        client, provider, model, messages, base, deadline, label,
+                    )
+                    if status != 200:
+                        logger.warning(f"{label} Model ({model}) returned HTTP {status}")
+                        rejections.append("rate_limited" if status == 429 else "http_error")
                         continue
-                    result = response.json()
-                    choices = result.get("choices") if "error" not in result else None
-                    if not choices or not choices[0].get("message"):
+                    if not raw_text:
                         rejections.append("empty_response")
                         continue
-                    raw_content = choices[0]["message"].get("content")
-                    if not raw_content or not isinstance(raw_content, str):
-                        rejections.append("empty_response")
-                        continue
-                    content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip()
+                    content = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
                     if self._detect_prompt_leak(content):
                         rejections.append("prompt_leak")
                         continue
@@ -538,14 +608,14 @@ class AIService:
                     if any(len(part) > block_limit for part in parts):
                         rejections.append("length")
                         continue
-                    self.last_generation_model = result.get("model") or model
+                    self.last_generation_model = responded_model or model
                     self.last_generation_type = "ai_source_bound"
                     self.last_language_format_status = "passed"
                     self.last_source_id = None
                     self.last_source_url = request.source_url
                     self.last_validation_reason = None
                     logger.info(
-                        f"Source-bound generation accepted: model={model} attempt={attempt} "
+                        f"Source-bound generation accepted: provider={provider} attempt={attempt} "
                         f"rich_source={rich_source} blocks={len(parts)}"
                     )
                     logger.info(f"Source-bound sample: {' | '.join(parts)[:400]}")
@@ -557,23 +627,6 @@ class AIService:
         self.last_validation_reason = unique_reasons
         logger.error(f"Source-bound generation failed after {len(cascade)} attempts: {unique_reasons}")
         raise RuntimeError(unique_reasons)
-
-    @staticmethod
-    def _models_without_reasoning() -> set[str]:
-        return {m.strip() for m in settings.MODELS_WITHOUT_REASONING_PARAM.split(",") if m.strip()}
-
-    async def _post_with_rate_limit_retries(self, client, body, model: str, label: str, started: float):
-        """On HTTP 429 wait before retrying the same model, within the per-event time budget."""
-        response = await client.post(self.url, headers=self.headers, json=body)
-        for _ in range(RATE_LIMIT_RETRIES):
-            if response.status_code != 429:
-                break
-            if time.monotonic() - started + RATE_LIMIT_WAIT_SECONDS > SOURCE_BOUND_TIME_BUDGET_SECONDS:
-                break
-            logger.warning(f"{label} Model ({model}) rate-limited; retrying after {RATE_LIMIT_WAIT_SECONDS}s")
-            await asyncio.sleep(RATE_LIMIT_WAIT_SECONDS)
-            response = await client.post(self.url, headers=self.headers, json=body)
-        return response
 
     @staticmethod
     def _build_source_bound_user_message(request: EventRewriteRequest, summary: str, rich_source: bool) -> str:

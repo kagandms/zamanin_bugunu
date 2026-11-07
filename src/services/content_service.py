@@ -455,8 +455,10 @@ class ContentService:
         # Prefer candidates whose linked page gives the model a substantial summary; if none has one, keep the full pool.
         rich = [i for i in candidates if self._summary_length(i) >= SOURCE_RICH_MIN_CHARS]
         if rich:
-            logger.info(f"Event pool narrowed to {len(rich)} candidates with source summaries >= {SOURCE_RICH_MIN_CHARS} chars")
-            candidates = rich
+            # Turkey-connected events come first among the candidates with suitable summaries.
+            turkish_rich = [i for i in rich if self._is_turkish(i.get('text', ''))]
+            candidates = turkish_rich or rich
+            logger.info(f"Event pool narrowed to {len(candidates)} candidates (summary >= {SOURCE_RICH_MIN_CHARS}, Turkey-first)")
         pool = candidates
         turkish_count = sum(1 for i in pool if self._is_turkish(i.get('text', '')))
         logger.info(f"Event pool: {len(pool)} total ({turkish_count} Turkish, {len(pool) - turkish_count} Global)")
