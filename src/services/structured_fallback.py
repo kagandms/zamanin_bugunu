@@ -24,6 +24,7 @@ PERSON_QUESTIONS: tuple[str, ...] = (
 )
 FALLBACK_QUESTIONS: tuple[str, ...] = EVENT_QUESTIONS + PERSON_QUESTIONS
 _MIN_NEW_WORDS = 2  # a summary sentence must add at least this many meaningful words the event lacks
+_REPEAT_SHARE = 0.5  # share of meaningful words already in the event at which a sentence counts as a repeat
 _STOP = {"bir", "ile", "olan", "olarak", "hakkinda", "bilgi", "ve", "bu", "icin", "daha", "kadar", "gibi"}
 
 
@@ -56,6 +57,9 @@ def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | 
         new_words = [word for word in sentence_words if not _matches(word, event_words)]
         if not matched or len(new_words) < _MIN_NEW_WORDS:
             # No event link, or the sentence only repeats what the event already says.
+            continue
+        if len(matched) / len(sentence_words) >= _REPEAT_SHARE:
+            # Root overlap with the event is high: the sentence repeats the event's facts.
             continue
         overlap = len(set(matched))
         if best is None or overlap > best[0]:

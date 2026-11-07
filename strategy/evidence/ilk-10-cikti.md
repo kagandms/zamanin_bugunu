@@ -254,3 +254,25 @@ Sonuç: 0/10 olay model çıktısıyla üretildi, 10 olay fallback'e düştü.
 > Chaine Staelens, Hollandalı voleybolcu. Chaïne Staelens Belçika kökenli Hollandalı voleybolcu. #tarih
 >
 > Bu ayrıntıyı daha önce duymuş muydunuz?
+
+## Tam akış kuru çalıştırması (DRY_RUN, kopya veritabanı)
+
+Akış: olay seçimi → hazırlama → rezervasyon → yapılandırılmış fallback → kuru yayın. OpenRouter anahtarı boş bırakıldı (OpenRouter'a çağrı yok). Yayın adaptörleri kuru sahte; kapı sahte (Git'e commit/push yok). Gerçek `bot_data.db` değişmedi (sha aynı); kopyaya bir kayıt eklendi (event_id 270).
+
+```
+[PREP] event: ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bus
+[PREP] generation_type: source_fallback:http_error:structured | parts: 2
+[DRY] gate authorized event_id=270 (no git checkpoint)
+[DRY] telegram would post 470 chars, image=yes
+[DRY] threads would post 2 parts
+[PUBLISH] stopped: No platform main artifact was confirmed; reconciliation required
+```
+
+- Üretim tipi: `source_fallback:http_error:structured`; görsel: `wikipedia_thumbnail`.
+- Yayın sonucu: `stopped: No platform main artifact was confirmed; reconciliation required`. Kuru adaptörler `dry_run` döndürdüğü için kod bunu onaylı ana gönderi saymadı; beklenen davranış.
+- Kuru çıktı (Telegram/Threads kısmı):
+
+> 🕊️ Tarihte Bugün (7.11.2000)
+> 
+> ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bush'tan daha fazla oy almasına rağmen, hayli tartışmalı bir belirsizlik döneminden sonra, ABD Yüksek Mahkemesi'nin kararıyla, George W. Bush 12 Aralık 2000'de Başkan ilan edildi. #tarih
+> Bu ayrıntıyı daha önce duymuş muydunuz?

@@ -153,7 +153,9 @@ async def test_unprofiled_burak_output_uses_source_fallback_when_models_fail(
 
     rendered = "\n".join(parts)
     assert "19.10.1975" in rendered
-    assert "Burak Güven (19 Ekim 1975" in rendered
+    # The summary sentence repeats the event's subject and role, so only the event and the question remain.
+    assert "Burak Güven (19 Ekim 1975" not in rendered
+    assert len(parts) == 2
     assert "founding" not in rendered.casefold()
     assert "önemli bir yer" not in rendered.casefold()
     assert "sembolik" not in rendered.casefold()
@@ -191,9 +193,9 @@ async def test_unprofiled_fallback_preserves_source_supported_member_distinction
 
     parts, _, _ = await service.rewrite_event_safe(request)
 
-    # A summary sentence that only repeats the event is left out; one that adds a fact is kept.
+    # High root overlap with the event means the summary sentence repeats it, so it is left out.
     rendered = "\n".join(parts)
-    assert (expected_context in rendered) == ("kurucu" in source_context)
+    assert expected_context not in rendered
 
 
 @pytest.mark.asyncio
