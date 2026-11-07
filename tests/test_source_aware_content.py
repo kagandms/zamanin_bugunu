@@ -122,7 +122,7 @@ def test_profiled_output_rejects_model_authored_source_absence_note() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unprofiled_burak_output_uses_source_fallback_without_calling_model(
+async def test_unprofiled_burak_output_uses_source_fallback_when_models_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -131,10 +131,10 @@ async def test_unprofiled_burak_output_uses_source_fallback_without_calling_mode
     )
     service = AIService()
 
-    async def unexpected_model_call(request: EventRewriteRequest) -> tuple[list[str], list[str], None]:
-        raise AssertionError("unprofiled claims cannot be accepted from a model")
+    async def failed_model_call(request: EventRewriteRequest) -> tuple[list[str], list[str], None]:
+        raise RuntimeError("all_models_failed")
 
-    service.rewrite_event = unexpected_model_call
+    service.rewrite_event = failed_model_call
     request = EventRewriteRequest(
         original_text=(
             "Burak Güven, Türk bas gitarist, şarkı sözü yazarı ve Mor ve Ötesi grubu üyesi"
@@ -158,7 +158,7 @@ async def test_unprofiled_burak_output_uses_source_fallback_without_calling_mode
     assert "önemli bir yer" not in rendered.casefold()
     assert "sembolik" not in rendered.casefold()
     assert "doğrudan kaynakta yer almamaktadır" not in rendered.casefold()
-    assert service.last_generation_type == "source_fallback:unprofiled_claims_unverified:source_context"
+    assert service.last_generation_type == "source_fallback:all_models_failed:source_context"
     assert service.last_source_fact_status == "not_checked"
 
 

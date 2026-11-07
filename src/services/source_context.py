@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 
 MAX_SOURCE_CHARS = 3000
+SUMMARY_MAX_CHARS = 800
 _EVENT_KINDS = {
     "antlas": "treaty", "anlas": "treaty", "saldir": "combat", "catis": "combat",
     "muhareb": "battle", "savas": "war", "deprem": "earthquake", "isyan": "revolt",
@@ -180,3 +182,68 @@ def select_event_source(candidate: Mapping[str, object]) -> SelectedSource | Non
     event = SourceContextInput(str(candidate.get("text") or ""), year, linked_titles=titles)
     sources = [source for page in pages if (source := _read_page(page, event)) is not None]
     return max(sources, key=lambda source: (source.specificity, len(source.context)), default=None)
+
+
+def complete_sentences(text: str) -> tuple[str, ...]:
+    """Public view of the bounded, complete-sentence splitter used for source text."""
+    return _complete_sentences(text)
+
+
+def bounded_summary(sentences: Iterable[str], max_chars: int = SUMMARY_MAX_CHARS) -> tuple[str, ...]:
+    """Keep unique sentences in source order while the joined text stays within max_chars."""
+    selected: list[str] = []
+    total = 0
+    for sentence in dict.fromkeys(sentences):
+        extra = len(sentence) + (1 if selected else 0)
+        if total + extra > max_chars:
+            break
+        selected.append(sentence)
+        total += extra
+    return tuple(selected)
+
+
+def summary_sentences(title: str | None, extract: str, evidence: SourceContextInput) -> tuple[str, ...]:
+    """Sentences for the source-bound summary of one page.
+
+    Keeps the strictly event-related sentences, plus sentences that mention the
+    page's event anchor (e.g. "Kars" for "Kars Antlaşması"). Sentences with a
+    conflicting event year are always dropped.
+    """
+    anchors = _title_identity(title or "")
+    anchor_words = anchors[0] if anchors else ()
+    strict = set(relevant_source_sentences(SourceContextInput(
+        evidence.event_text, evidence.year, title, extract, evidence.linked_titles,
+    )))
+    kept: list[str] = []
+    for sentence in _complete_sentences(extract):
+        mentions_anchor = bool(anchor_words) and any(
+            _matches(word, list(anchor_words)) for word in _words(sentence)
+        )
+        if sentence not in strict and not mentions_anchor:
+            continue
+        if _has_conflicting_sentence_year(sentence, evidence):
+            continue
+        kept.append(sentence)
+    return bounded_summary(kept)
+
+
+def select_event_summary(candidate: Mapping[str, object]) -> SelectedSource | None:
+    """Like select_event_source, but the selected page contributes its bounded summary."""
+    source = select_event_source(candidate)
+    if source is None:
+        return None
+    pages = candidate.get("pages") or []
+    titles = tuple(str((page.get("titles") or {}).get("canonical") or page.get("title") or "") for page in pages)
+    page = next((
+        page for page in pages
+        if str((page.get("titles") or {}).get("canonical") or page.get("title") or "") == source.title
+        and isinstance(page.get("extract"), str)
+    ), None)
+    if page is None:
+        return source
+    year = str(candidate["year"]) if candidate.get("year") is not None else None
+    event = SourceContextInput(str(candidate.get("text") or ""), year, linked_titles=titles)
+    sentences = summary_sentences(source.title, str(page["extract"]), event)
+    if not sentences:
+        return source
+    return replace(source, context=" ".join(sentences))

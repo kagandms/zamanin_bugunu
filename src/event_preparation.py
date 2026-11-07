@@ -13,9 +13,11 @@ from src.data.models import EventReservation, EventSourceEvidenceData, PostMetad
 from src.data.repository import HistoryRepository
 from src.data.source_evidence import build_source_evidence
 from src.services.ai_service import AIService
-from src.services.content_guard import EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile
+from src.services.content_guard import (
+    EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile, source_summary_sentences,
+)
 from src.services.content_service import ContentService
-from src.services.source_context import select_event_source
+from src.services.source_context import select_event_source, select_event_summary
 from src.services.image_service import ImageService
 
 TELEGRAM_FOOTER = "Tarihin perde arkasını ve unutulan dönüm noktalarını her gün keşfetmek için kanalımıza katılın:\n🔗 https://t.me/zamaninbugunu"
@@ -80,7 +82,7 @@ def _rewrite_request(candidate: dict[str, object], observed: datetime) -> EventR
                            source_context=page.get("extract"))
         if resolve_fact_profile(profiled):
             return replace(profiled, source_context=" ".join(get_relevant_source_sentences(profiled)) or None)
-    source = select_event_source(candidate)
+    source = select_event_summary(candidate)
     return replace(request, source_title=source.title, source_url=source.url,
                    source_context=source.context) if source else request
 
@@ -155,6 +157,8 @@ def _rewrite_rejection(candidate: dict[str, object], blocks: list[str], generati
 
 
 def _used_source_sentences(request: EventRewriteRequest, generation_type: str) -> tuple[str, ...]:
+    if generation_type == "ai_source_bound":
+        return source_summary_sentences(request)
     if generation_type.startswith("source_fallback:") and not generation_type.endswith(":source_context"):
         return ()
     sentences = get_relevant_source_sentences(request)

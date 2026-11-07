@@ -192,7 +192,7 @@ async def test_invalid_kars_generation_uses_curated_source_fallback(monkeypatch:
     assert "Türk Kurtuluş Savaşı sona erdi" not in combined_text
     assert "Kars'ta imzalandı" in combined_text
     assert "Batı Cephesi" in combined_text
-    assert service.prompt_version == "event-rewrite-v4+fact-guard-v6"
+    assert service.prompt_version == "event-rewrite-v4+fact-guard-v7"
     assert service.last_generation_type == "source_fallback:unsupported_signing_location,unsupported_war_scope"
     assert service.last_source_id == "ttk-library-541556+ttk-istiklal-harbi"
     assert "kutuphane.ttk.gov.tr" in service.last_source_url
@@ -256,7 +256,7 @@ async def test_model_guard_tries_two_candidates_then_uses_source_fallback(monkey
 
 
 @pytest.mark.asyncio
-async def test_unprofiled_ai_metadata_does_not_claim_source_facts_were_checked(
+async def test_unprofiled_model_output_is_source_bound_and_not_fact_checked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src.core.config import Settings
@@ -264,12 +264,21 @@ async def test_unprofiled_ai_metadata_does_not_claim_source_facts_were_checked(
 
     monkeypatch.setattr("src.services.ai_service.settings", Settings(
         OPENROUTER_API_KEY="mock-key", AI_MODEL="mock-model", BACKUP_MODEL="backup-model",
-        LAST_RESORT_MODEL="last-model",
+        TERTIARY_MODEL="tertiary-model", MAX_THREAD_LENGTH=500,
     ))
+    content = (
+        "EMOJI: 🏛️\n---\nMoskova Antlaşması 1921 yılında imzalandı ve bir dönemin kapısını araladı.\n"
+        "---\nBu olayı daha önce duymuş muydunuz?"
+    )
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"model": "mock-model", "choices": [{"message": {"content": content}}]}
 
     class Client:
-        called = False
-
         def __init__(self, **kwargs: object) -> None:
             pass
 
@@ -279,19 +288,21 @@ async def test_unprofiled_ai_metadata_does_not_claim_source_facts_were_checked(
         async def __aexit__(self, *args: object) -> None:
             return None
 
-        async def post(self, url: str, **kwargs: object) -> object:
-            self.called = True
-            raise AssertionError("unprofiled event should not call a model")
+        async def post(self, url: str, **kwargs: object) -> Response:
+            return Response()
 
     monkeypatch.setattr("src.services.ai_service.httpx.AsyncClient", Client)
     service = AIService()
+    request = EventRewriteRequest("Moskova Antlaşması imzalandı.", "16.03.1921", "1921")
 
-    with pytest.raises(ValueError, match="unprofiled_claims_unverified"):
-        await service.rewrite_event(
-            EventRewriteRequest("Moskova Antlaşması imzalandı.", "16.03.1921", "1921")
-        )
+    parts, _, _ = await service.rewrite_event_safe(request)
 
+    assert parts[0].startswith("🏛️ Tarihte Bugün (16.03.1921)\n\n")
+    assert "#tarih" in parts[0]
+    assert len(parts) == 2
+    assert service.last_generation_type == "ai_source_bound"
     assert service.last_source_fact_status == "not_checked"
+    assert service.prompt_version.startswith("event-rewrite-v5+")
 
 
 def test_kars_profile_allows_moscow_as_a_distinct_treaty_reference() -> None:

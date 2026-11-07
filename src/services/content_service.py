@@ -33,7 +33,7 @@ class CategoryFetchResult:
     attempts: int
     retry_after_seconds: float | None = None
     fetched_at: datetime | None = None
-from src.services.source_context import select_event_source
+from src.services.source_context import select_event_source, select_event_summary
 
 TOPIC_KEYWORDS = {
     "SIYASET": [
@@ -198,6 +198,11 @@ class ContentService:
                     score += 10
             except (ValueError, TypeError):
                 pass
+
+        # 1.7 Thin source summaries give the model little to interpret; mild penalty, no exclusion.
+        source = select_event_summary(item)
+        if len(source.context if source else "") < 100:
+            score -= 10
 
         return score
 

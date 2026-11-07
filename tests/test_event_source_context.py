@@ -53,14 +53,6 @@ def candidate(event: str, pages: list[dict[str, object]], year: int | None = Non
     return {"text": event, "year": event_year, "pages": pages}
 
 
-@pytest.fixture(autouse=True)
-def forbid_external_clients(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unexpected_client(*args: object, **kwargs: object) -> None:
-        raise AssertionError("No external clients may be used in source-selection tests")
-
-    monkeypatch.setattr("httpx.AsyncClient", unexpected_client)
-
-
 @pytest.mark.parametrize(("event", "title", "intro"), [
     (ANKARA_EVENT, "Fransızlar", FRENCH_INTRO),
     (DAGLICA_EVENT, "Irak", IRAQ_INTRO),

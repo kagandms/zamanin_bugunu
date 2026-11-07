@@ -4,12 +4,15 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.services.content_guard import (
     CONTENT_GUARD_VERSION,
+    SOURCE_RICH_MIN_CHARS,
     EventRewriteRequest,
     get_source_fact_status,
     get_relevant_source_sentences,
     has_relevant_source_context,
     resolve_fact_profile,
+    source_summary_sentences,
     validate_event_content,
+    validate_source_bound_content,
 )
 from src.utils.text_utils import (
     clean_twitter_text,
@@ -98,6 +101,61 @@ _LEAK_PHRASES = [
 # Turkish-specific characters — at least some should be present in genuine Turkish text
 _TURKISH_CHARS = set("çÇşŞğĞüÜöÖıİ")
 
+_TURKISH_COMMON_WORDS = {
+    "ve", "bir", "bu", "ile", "için", "olan", "tarihte", "bugün", "yılında",
+    "sonra", "olarak", "savaş", "büyük", "tarafından", "etti", "oldu", "sonuç",
+    "günümüzde", "tarihin", "önemli", "devlet", "imparatorluk", "türk", "osmanlı",
+    "halk", "asker", "gün", "yıl", "dönem", "karar", "dünya"
+}
+
+# Source-bound generation (events without a curated fact profile)
+EMOJI_CHOICES = ("🕊️", "⚔️", "🏛️", "🔬", "🎭", "🌍")
+DEFAULT_EMOJI = "🕊️"
+PROMPT_VERSION_PROFILED = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
+PROMPT_VERSION_SOURCE_BOUND = f"event-rewrite-v5+{CONTENT_GUARD_VERSION}"
+_SOURCE_BOUND_MODEL_ATTEMPTS = 3
+_EMOJI_LINE = re.compile(r"^[ \t]*EMOJI:[ \t]*(\S+)", re.MULTILINE)
+_ECHOED_HEADER = re.compile(r"^\S{0,3}\s*Tarihte Bugün\s*\([^)]*\)\s*", re.IGNORECASE)
+_TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
+
+SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
+
+GÖREVİN
+Kullanıcı mesajındaki "Kaynak olay" ve "Kaynak özeti"ni, aynı bilgiyi koruyarak, akışta okuyucuyu durduracak
+ilgi çekici bir metne dönüştürmek. YENİ BİLGİ EKLEMEZSİN; yalnızca verilen bilgiyi yorumlayıp çerçevelersin.
+
+KESİN KURALLAR
+1. Yalnızca kaynak olay ve kaynak özetindeki olgulara dayan. Kaynakta olmayan kişi, yer, sayı, tarih,
+   alıntı, neden, niyet, duygu, sonuç veya "ilk/en/tek" gibi üstünlük iddiası yazma.
+2. Tarafsızsın. Değer yargısı ve duygusal sıfat kullanma (vahim, kahraman, hain, korkunç, utanç vb.).
+   Birden fazla taraf varsa "kimine göre … kimine göre …" gibi dengeli yaz; yalnızca kaynakta varsa.
+3. Başlık yazma, tarih başlığı ekleme, takip çağrısı yazma. Bunları sistem ekler.
+4. HTML, markdown, madde işareti, açıklama, düşünce notu yazma. Yalnızca istenen biçimi ver.
+
+NASIL İLGİ ÇEKİCİ YAPARSIN
+- Bölüm 1'in ilk cümlesi okuyucuyu durdurmalı: kaynaktaki en şaşırtıcı, en çarpıcı veya en insani olguyla aç.
+  "X tarihinde Y oldu" gibi ansiklopedi girişi YASAK. 1-2 cümle.
+- Ritim: kısa cümleler, bir uzun cümle. Gereksiz süs yok. Belgesel anlatıcısı sakinliği.
+- Kaynak zengin ise ikinci bölümde aynı bilgileri bağlamla ilişkilendir; zayıfsa ikinci bölüm üretme.
+- Kapanış: tek, açık uçlu, yargısız bir soru. Taraf seçtiren soru yazma ("doğru muydu yanlış mıydı" gibi).
+  Soru, olayın kendi somut ayrıntısına bağlı, kısa ve doğal konuşma dilinde olmalı; kalıp/şablon hissi vermemeli.
+  "Ailenizde … oldu mu?" gibi genel aile-anı kalıpları YASAK (yapay duruyor; kullanıcı kararı).
+  Tercih edilen türler: (a) bilgi yoklaması: "Bunu biliyor muydunuz?" / "Bu olayı daha önce duymuş muydunuz?",
+  (b) somut merak sorusu: olayın içindeki ayrıntıya dair ("Sizce o gün … nasıl karşılandı?" yalnızca kaynak uygunsa),
+  (c) açık uçlu okuma: "Bu olayı bugün nasıl okuyorsunuz?". Her gönderide aynı soruyu kullanma.
+  "Beğenin, takip edin, yorum yapın" gibi doğrudan istek yazma.
+- Konuya uygun TEK emoji seç (aşağıdaki listeden) ve EMOJI: satırına yaz.
+
+ÇIKTI BİÇİMİ (tam olarak)
+EMOJI: <🕊️|⚔️|🏛️|🔬|🎭|🌍>
+---
+<bölüm 1; sonuna " #tarih" ekle>
+---
+<bölüm 2 (yalnızca kaynak özeti yeterliyse)>
+---
+<kapanış sorusu>
+GORSEL_PROMPT: <yalnızca istenirse; kaynakta desteklenen ayrıntılarla, İngilizce>"""
+
 
 class AIService:
     def __init__(self) -> None:
@@ -109,7 +167,7 @@ class AIService:
         self.last_source_fact_status = "not_checked"
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
-        self.prompt_version = f"event-rewrite-v4+{CONTENT_GUARD_VERSION}"
+        self.prompt_version = PROMPT_VERSION_PROFILED
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         header_title = sanitize_http_header_value(settings.APP_NAME)
         self.headers = {
@@ -199,14 +257,8 @@ class AIService:
             return False
 
         # Check 3: Turkish vocabulary check (must match Turkish words, not just single chars)
-        turkish_common_words = {
-            "ve", "bir", "bu", "ile", "için", "olan", "tarihte", "bugün", "yılında",
-            "sonra", "olarak", "savaş", "büyük", "tarafından", "etti", "oldu", "sonuç",
-            "günümüzde", "tarihin", "önemli", "devlet", "imparatorluk", "türk", "osmanlı",
-            "halk", "asker", "gün", "yıl", "dönem", "karar", "dünya"
-        }
         words = set(re.findall(r'\b[a-zA-ZçÇşŞğĞüÜöÖıİ]{2,}\b', clean_text.lower()))
-        matched_words = words.intersection(turkish_common_words)
+        matched_words = words.intersection(_TURKISH_COMMON_WORDS)
         if len(matched_words) < 2:
             logger.warning(f"⚠️ Content validation FAILED: Insufficient Turkish vocabulary ({len(matched_words)} matched: {matched_words}).")
             return False
@@ -277,7 +329,7 @@ class AIService:
         """Generate and validate a complete post before any platform publishes it."""
         profile = resolve_fact_profile(request)
         if profile is None:
-            raise ValueError("unprofiled_claims_unverified")
+            return await self._rewrite_source_bound(request)
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
         source_context = " ".join(get_relevant_source_sentences(request)) or None
@@ -316,7 +368,7 @@ class AIService:
             "Last Resort (Qwen 3.8)"
         ]
 
-        model_attempt_limit = min(2, len(models)) if profile else len(models)
+        model_attempt_limit = min(2, len(models))
         self.last_validation_reason = None
         async with httpx.AsyncClient(timeout=35.0) as client:
             for model, label in zip(models[:model_attempt_limit], model_names[:model_attempt_limit]):
@@ -389,6 +441,140 @@ class AIService:
 
             logger.error("❌ No AI candidate passed generation and source checks.")
             raise RuntimeError(self.last_validation_reason or "all_models_failed")
+
+    async def _rewrite_source_bound(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
+        """Interpret the event sentence and its source summary; no curated facts are required."""
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY is required for AI rewriting.")
+        summary = " ".join(source_summary_sentences(request))
+        rich_source = len(summary) >= SOURCE_RICH_MIN_CHARS
+        self.last_source_fact_status = get_source_fact_status(None)
+        self.last_language_format_status = "unknown"
+        payload = {
+            "messages": [
+                {"role": "system", "content": SOURCE_BOUND_SYSTEM_PROMPT},
+                {"role": "user", "content": self._build_source_bound_user_message(request, summary, rich_source)},
+            ],
+            "stream": False,
+            "temperature": 0.5,
+            "max_tokens": 1200,
+            "reasoning": {"effort": "none"},
+        }
+        cascade = [
+            (settings.AI_MODEL, "Primary (Ling 3.0)"),
+            (settings.BACKUP_MODEL, "Secondary (Nemotron 3 Super)"),
+            (getattr(settings, "TERTIARY_MODEL", "google/gemma-4-31b-it:free"), "Tertiary (Gemma 4 31B)"),
+        ][:_SOURCE_BOUND_MODEL_ATTEMPTS]
+        block_limit = settings.MAX_THREAD_LENGTH - 20
+        rejections: list[str] = []
+        self.last_validation_reason = None
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            for attempt, (model, label) in enumerate(cascade, start=1):
+                try:
+                    payload["model"] = model
+                    response = await client.post(self.url, headers=self.headers, json=payload)
+                    if response.status_code != 200:
+                        logger.warning(f"{label} Model ({model}) returned HTTP {response.status_code}")
+                        rejections.append("http_error")
+                        continue
+                    result = response.json()
+                    choices = result.get("choices") if "error" not in result else None
+                    if not choices or not choices[0].get("message"):
+                        rejections.append("empty_response")
+                        continue
+                    raw_content = choices[0]["message"].get("content")
+                    if not raw_content or not isinstance(raw_content, str):
+                        rejections.append("empty_response")
+                        continue
+                    content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip()
+                    if self._detect_prompt_leak(content):
+                        rejections.append("prompt_leak")
+                        continue
+                    content = self._clean_meta_text(content)
+                    emoji_line_present, emoji, blocks, image_prompt = self._parse_source_bound_response(content)
+                    reasons = list(validate_source_bound_content(
+                        blocks, request, emoji_line_present, max_block_chars=block_limit,
+                    ))
+                    if not self._has_turkish_vocabulary("\n".join(blocks)):
+                        reasons.append("language")
+                    if reasons:
+                        rejections.extend(reasons)
+                        logger.warning(f"{label} Model ({model}) rejected: {','.join(reasons)}")
+                        continue
+                    parts = self._assemble_source_bound_parts(emoji, blocks, request.formatted_date)
+                    if any(len(part) > block_limit for part in parts):
+                        rejections.append("length")
+                        continue
+                    self.last_generation_model = result.get("model") or model
+                    self.last_generation_type = "ai_source_bound"
+                    self.last_language_format_status = "passed"
+                    self.last_source_id = None
+                    self.last_source_url = request.source_url
+                    self.last_validation_reason = None
+                    logger.info(
+                        f"Source-bound generation accepted: model={model} attempt={attempt} "
+                        f"rich_source={rich_source} blocks={len(parts)}"
+                    )
+                    logger.info(f"Source-bound sample: {' | '.join(parts)[:400]}")
+                    return parts, [], image_prompt
+                except Exception as error:
+                    rejections.append("exception")
+                    logger.warning(f"⚠️ {label} Model ({model}) exception: {type(error).__name__}")
+        unique_reasons = ",".join(dict.fromkeys(rejections)) or "all_models_failed"
+        self.last_validation_reason = unique_reasons
+        logger.error(f"Source-bound generation failed after {len(cascade)} attempts: {unique_reasons}")
+        raise RuntimeError(unique_reasons)
+
+    @staticmethod
+    def _build_source_bound_user_message(request: EventRewriteRequest, summary: str, rich_source: bool) -> str:
+        year = f" ({request.year})" if request.year else ""
+        return (
+            f"Kaynak olay: {request.original_text}{year}\n"
+            f"Kaynak özeti: {summary or 'Sağlanmadı.'}\n"
+            f"Kaynak zengin mi: {'evet' if rich_source else 'hayır'}"
+        )
+
+    @staticmethod
+    def _parse_source_bound_response(content: str) -> Tuple[bool, str, List[str], Optional[str]]:
+        """Split the model output into emoji, body blocks and optional image prompt. Header is not expected."""
+        image_prompt = None
+        if "GORSEL_PROMPT:" in content:
+            content, _, image_part = content.partition("GORSEL_PROMPT:")
+            image_prompt = image_part.strip() or None
+        emoji_match = _EMOJI_LINE.search(content)
+        emoji_line_present = emoji_match is not None
+        raw_emoji = emoji_match.group(1) if emoji_match else ""
+        if emoji_match:
+            content = content[:emoji_match.start()] + content[emoji_match.end():]
+        blocks: list[str] = []
+        for section in content.split("---"):
+            text = _ECHOED_HEADER.sub("", section.strip(), count=1).strip()
+            if text:
+                blocks.append(text)
+        return emoji_line_present, AIService._canonical_emoji(raw_emoji), blocks, image_prompt
+
+    @staticmethod
+    def _canonical_emoji(raw: str) -> str:
+        """Return an approved emoji; anything outside the approved set becomes the default."""
+        stripped = raw.replace("️", "")
+        for choice in EMOJI_CHOICES:
+            if choice.replace("️", "") == stripped:
+                return choice
+        return DEFAULT_EMOJI
+
+    @staticmethod
+    def _assemble_source_bound_parts(emoji: str, blocks: List[str], formatted_date: Optional[str]) -> List[str]:
+        """Code owns the header and the #tarih tag; the model only writes body text."""
+        body = list(blocks)
+        if not _TAG_TARIH.search(body[0]):
+            body[0] = f"{body[0].rstrip()} #tarih"
+        header = f"{emoji} Tarihte Bugün ({formatted_date})" if formatted_date else f"{emoji} Tarihte Bugün"
+        return [f"{header}\n\n{body[0]}", *body[1:]]
+
+    @staticmethod
+    def _has_turkish_vocabulary(text: str) -> bool:
+        words = set(re.findall(r'\b[a-zA-ZçÇşŞğĞüÜöÖıİ]{2,}\b', text.lower()))
+        return len(words.intersection(_TURKISH_COMMON_WORDS)) >= 2
 
     @staticmethod
     def _build_system_prompt(request: EventRewriteRequest, trusted_facts: tuple[str, ...]) -> str:
@@ -470,18 +656,16 @@ class AIService:
 
     async def rewrite_event_safe(self, request: EventRewriteRequest) -> Tuple[List[str], List[str], Optional[str]]:
         """Return a fully validated generation or a factual source-only fallback."""
-        if resolve_fact_profile(request) is None:
-            reason = "unprofiled_claims_unverified"
-            self.last_generation_model = None
-            self.last_validation_reason = reason
-            self.last_source_fact_status = "not_checked"
-            return self.generate_source_fallback(request, reason)
-
+        profile = resolve_fact_profile(request)
+        self.prompt_version = PROMPT_VERSION_PROFILED if profile else PROMPT_VERSION_SOURCE_BOUND
         reason = "model_generation_failed"
         try:
             result = await self.rewrite_event(request)
             tweets, poll_options, image_prompt = result
-            validation_reasons = validate_event_content(tweets, request, resolve_fact_profile(request))
+            if profile is None:
+                # Source-bound output was already validated inside rewrite_event.
+                return result
+            validation_reasons = validate_event_content(tweets, request, profile)
             if len("".join(tweets)) >= 80 and not validation_reasons:
                 return result
             reason = self.last_validation_reason or ",".join(validation_reasons) or "output_too_short"
@@ -491,7 +675,7 @@ class AIService:
             logger.warning("AI rewrite failed ({}); using source-backed fallback.", reason)
         self.last_generation_model = None
         self.last_validation_reason = reason
-        self.last_source_fact_status = get_source_fact_status(resolve_fact_profile(request))
+        self.last_source_fact_status = get_source_fact_status(profile)
         return self.generate_source_fallback(request, reason)
 
     def _parse_ai_response(self, content: str, original_text: str, formatted_date: Optional[str] = None):

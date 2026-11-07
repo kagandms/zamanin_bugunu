@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 from src.services.source_context import (
-    SourceContextInput, normalize_fact_text, relevant_source_sentences,
+    SUMMARY_MAX_CHARS, SourceContextInput, bounded_summary, complete_sentences,
+    normalize_fact_text, relevant_source_sentences,
 )
 
 
-CONTENT_GUARD_VERSION = "fact-guard-v6"
+CONTENT_GUARD_VERSION = "fact-guard-v7"
+SOURCE_RICH_MIN_CHARS = 200
 KARS_SOURCE_URL = "https://kutuphane.ttk.gov.tr/details?id=541556&materialType=NE&query=G%C3%BCrcistan+_+T%C3%BCrkiye."
 KARS_SCOPE_SOURCE_URL = "https://ttk.gov.tr/istiklal-harbi/"
 II_MURAD_SOURCE_URL = "https://tr.wikipedia.org/wiki/II._Murad"
@@ -213,3 +215,113 @@ def _is_supported_year_context(sentence: str, year: str) -> bool:
         and re.search(r"mucadele", sentence)
         and re.search(r"sur\w*|uzan\w*", sentence)
     )
+
+
+# --- Source-bound generation (profile-less events, prompt event-rewrite-v5) ---
+
+_SOURCE_BOUND_NUMBER_WORDS = ("iki", "dort", "bes", "alti", "yedi", "sekiz", "dokuz", "bin", "milyon")
+_SOURCE_BOUND_VALUE_WORDS = (
+    "vahim", "kahraman", "hain", "korkunc", "utanc", "rezalet", "dehset", "muhtesem", "inanilmaz",
+)
+_SOURCE_BOUND_BANNED_PATTERNS = (
+    re.compile(r"\bilk kez\b"),
+    re.compile(r"\bilk defa\b"),
+    re.compile(r"\ben buyuk\b"),
+    re.compile(r"\btek\b"),
+    re.compile(r"\bdogru muydu\b"),
+    re.compile(r"\byanlis miydi\b"),
+    re.compile(r"(?:^|[.!?\n]\s*)ailenizde\b"),
+    re.compile(r"\b(?:begenin|takip edin|yorum yap\w*|abone olun|paylasin)\b"),
+    re.compile(r"\b(?:" + "|".join(_SOURCE_BOUND_VALUE_WORDS) + r")\w*"),
+)
+_SOURCE_BOUND_NON_NAMES = {"bugun", "tarihte", "tarih"} | {
+    "ocak", "subat", "mart", "nisan", "mayis", "haziran", "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik",
+}
+_NUMBER_PATTERN = re.compile(r"\d+(?:[.,]\d+)*")
+_WORD_PATTERN = re.compile(r"[^\W\d_]+")
+_SENTENCE_BREAK = re.compile(r"[.!?\n:;]+")
+
+
+def source_summary_sentences(request: EventRewriteRequest) -> tuple[str, ...]:
+    """The source summary the model may see: complete sentences, bounded to SUMMARY_MAX_CHARS."""
+    return bounded_summary(complete_sentences(request.source_context or ""), SUMMARY_MAX_CHARS)
+
+
+def _source_evidence_text(request: EventRewriteRequest) -> str:
+    return " ".join((request.original_text, request.year or "", " ".join(source_summary_sentences(request))))
+
+
+def _numbers_in(text: str) -> set[str]:
+    return {re.sub(r"[.,]", "", match) for match in _NUMBER_PATTERN.findall(text)}
+
+
+def _unsupported_numbers(text: str, evidence: str) -> bool:
+    evidence_numbers = _numbers_in(evidence)
+    if _numbers_in(text) - evidence_numbers:
+        return True
+    normalized_text = normalize_fact_text(text)
+    normalized_evidence = normalize_fact_text(evidence)
+    return any(
+        re.search(rf"\b{word}\b", normalized_text) and not re.search(rf"\b{word}\b", normalized_evidence)
+        for word in _SOURCE_BOUND_NUMBER_WORDS
+    )
+
+
+def _unsupported_names(text: str, evidence: str) -> bool:
+    normalized_evidence = normalize_fact_text(evidence)
+    for sentence in _SENTENCE_BREAK.split(text):
+        tokens = _WORD_PATTERN.findall(sentence)
+        for index, token in enumerate(tokens):
+            if index == 0 or not token[0].isupper():
+                continue
+            normalized = normalize_fact_text(token)
+            if normalized in _SOURCE_BOUND_NON_NAMES:
+                continue
+            probe = normalized[:5] if len(normalized) >= 5 else normalized
+            if probe not in normalized_evidence:
+                return True
+    return False
+
+
+def _unsupported_banned_phrase(text: str, evidence: str) -> bool:
+    normalized_text = normalize_fact_text(text)
+    normalized_evidence = normalize_fact_text(evidence)
+    for pattern in _SOURCE_BOUND_BANNED_PATTERNS:
+        if pattern.search(normalized_text) and not pattern.search(normalized_evidence):
+            return True
+    return False
+
+
+def _format_problem(blocks: list[str], emoji_line_present: bool) -> bool:
+    if not emoji_line_present or not 2 <= len(blocks) <= 3:
+        return True
+    if any(len(block.strip()) < 20 for block in blocks):
+        return True
+    return not normalize_fact_text(blocks[-1].rstrip()).endswith("?")
+
+
+def validate_source_bound_content(
+    blocks: list[str],
+    request: EventRewriteRequest,
+    emoji_line_present: bool,
+    max_block_chars: int,
+) -> tuple[str, ...]:
+    """Automatic checks for model output that is grounded in the event sentence and source summary only.
+
+    Blocks are the model's body sections (no code-made header, no footer). Reasons are short codes so
+    the caller can log why a candidate was rejected.
+    """
+    reasons: list[str] = []
+    if _format_problem(blocks, emoji_line_present):
+        reasons.append("format")
+    if any(len(block) > max_block_chars for block in blocks):
+        reasons.append("length")
+    evidence = _source_evidence_text(request)
+    text = "\n".join(blocks)
+    if _unsupported_numbers(text, evidence):
+        reasons.append("unsupported_number")
+    if _unsupported_names(text, evidence):
+        reasons.append("unsupported_name")
+    if _unsupported_banned_phrase(text, evidence):
+        reasons.append("banned_phrase")
+    return tuple(reasons)
