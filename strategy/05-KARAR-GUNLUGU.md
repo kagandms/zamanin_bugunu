@@ -92,6 +92,41 @@ Hipotez: yakın tarih (1900-2000) ve Osmanlı/Milli Mücadele, dünya olayların
   - **Uzak dallar (`origin/codex/*`, `pr-5`, `pr-5-merge`) silinmedi.** Onay bekliyor.
   - Bilgi: main'deki `ai_service.py` prompt'una wiki `extract` metni enjekte edilmiyor (yerel eski commit 942fe4a bunu yapıyordu). Main'de kaynak bağlamı `source_context.py` üzerinden geliyor; prompt çalışmasında önce bu akışı okuyacağız.
 
+## Kritik bulgu – 4. tur (2026-11-07): AI yazımı fiilen kapalı
+
+main'deki `ai_service.py` + `content_guard.py` incelemesi ve DB (`post_history.generation_type`):
+
+- `rewrite_event_safe`: olay, elle hazırlanmış "fact profile" listesinde değilse (şu an yalnızca Kars Antlaşması 1921 ve II. Murad/Kosova 1448) AI hiç çağrılmaz; `source_fallback:unprofiled_claims_unverified` ile **ham Vikipedi cümlesi** yayımlanır.
+- 20 Ekim'den bugüne 34 ana gönderinin **34'ü** fallback. Biri 27 gönderi "thin_source" (başlık + tek cümle), 7'si başlık + cümle + "Kaynak özeti: …" paragrafı. Örnek (7 Kas): "İstanbul Zeyrek Camii'nde Bizans dönemi'nden kalma mozaikler bulundu." — hook yok, hikâye yok, soru yok.
+- Yani 03'teki tüm içerik ilkeleri (hook, kapanış sorusu, tarafsız anlatım, emoji) **şu an kodda devrede değil**. D-01/D-02 deneyleri üretim yeniden açılmadan ölçülemez.
+- Fallback dönemi 24h ort. 963 görüntüleme / 4,1 beğeni (35 gönderi). AI dönemi örneği 3 gönderi: kıyaslanamaz.
+- Neden: Codex "fact-guard" (kaynakta olmayan iddia yok) politikasını katı uyguladı. Kullanıcı "aşırı korumaya gerek yok" dedi; doğruluk marka için önemli ama bu seviye büyümeyi engelliyor.
+
+### Yeni açık sorular
+
+| # | Soru | Öneri |
+|---|---|---|
+| Q-11 | AI yazımı yeniden açılsın mı, ve hangi koruma seviyesiyle? | Evet. "Kaynağa bağlı serbest yazım": Vikipedi olay cümlesi + bağlantılı sayfa özeti prompt'a girer; AI hook, hikâye ve soru ekler; otomatik kontrol yalnızca yıl, sayı ve özel adların kaynakta olmasını arar. Elle profil şartı kalkar. |
+| Q-12 | Model: ücretsiz kaskad mı, ucuz ücretli model mi? | Günde 2 gönderi için aylık maliyet birkaç dolar; kaliteyi ve tutarlılığı artırır. Bütçe tavanı kullanıcı kararı. |
+
+### Karar – Q-12 (7 Kas)
+
+Ücretli model yok; ücretsiz model kaskadı kalır. Kullanıcı kararı. Sonuç: ücretsiz modeller daha zayıf olduğundan otomatik doğrulama (yıl/sayı/özel ad kontrolü) ve fallback kalmalı.
+
+### Q-11 serbestlik seviyeleri (öneri: Seviye 1)
+
+| Seviye | Ne yapar | Risk |
+|---|---|---|
+| 0 (şimdiki) | Ham Vikipedi cümlesi | Büyüme yok |
+| 1 (önerilen) | Yalnızca verilen olay cümlesi + sayfa özetindeki bilgi kullanılır; hook, anlatım sırası, soru ve emoji serbest. Yeni sayı/tarih/isim/alıntı/neden/niyet yok | Düşük-orta |
+| 2 | Model kendi bilgisini de ekler | Ücretsiz modellerde uydurma riski yüksek; önerilmez |
+
+Seviye 1 koruması: çıktıdaki yıl/sayı/özel adlar kaynak metinde geçmeli; geçmiyorsa sonraki modele, olmazsa fallback'e. Zayıflık: 27/34 gönderi "thin_source" (kaynak yalnızca tek cümle). Asıl çözüm daha fazla serbestlik değil, **daha zengin kaynak metni**: bağlantılı Vikipedi sayfası özetini (ilk ~800 karakter) prompt'a vermek ve olay seçiminde özeti zayıf olayları geri plana atmak.
+
+## Ertelenenler
+
+- **Token bitiş tarihi ve uyarı sistemi (7 Kas):** Kullanıcı "sonraya bırakalım" dedi. Not: bot her çalışmada token yeniler ama `expires_in` değerini kaydetmiyor; 14-17 Ekim kaybının kesin nedeni belirsiz. Haiku görevi: `expires_in` logla + süre dolmadan uyarı.
+
 ## Notlar
 
 - Haiku 5.5 high oturumuna verilecek görev brifleri **bu belgelerin kapanmış sorularından** üretilecek.

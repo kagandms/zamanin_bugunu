@@ -6,7 +6,7 @@ Bu belge **taslak**tır; onaylanınca prompt ve kod görevleri bundan türetilir
 
 - Değer yargısı yok: "vahim", "korkunç", "kahraman", "hain" gibi sıfatlar yazılmaz. Gerekirse atıf yapılır ("tarihçiler arasında farklı yorumlar var").
 - İki taraflı olaylarda "kimine göre … / kimine göre …" yapısı.
-- Kapanış sorusu bir tarafı seçtirmez. Kötü: "zorunluluk muydu yoksa vahim hata mıydı?". İyi: "Bu olayı bugün nasıl okuyorsunuz?", "Ailenizden bu dönemi anlatan biri oldu mu?", "Sizce bu karar bugün nasıl farklı sonuçlanırdı?" (en son tür dikkatle).
+- Kapanış sorusu bir tarafı seçtirmez. Kötü: "zorunluluk muydu yoksa vahim hata mıydı?". İyi: "Bu olayı bugün nasıl okuyorsunuz?", "Bunu daha önce duymuş muydunuz?" (aile-anı kalıpları yapay bulundu, kullanıcı kararı 7 Kas), "Sizce bu karar bugün nasıl farklı sonuçlanırdı?" (en son tür dikkatle).
 - Kışkırtıcı = merak uyandırıcı: şaşırtıcı ama doğrulanabilir detay. Yanlış/abartılı iddia yok.
 
 ## Hook (ilk cümle) ilkeleri

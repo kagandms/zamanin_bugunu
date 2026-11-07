@@ -20,7 +20,7 @@
 
 | # | Hipotez | Kollar | Süre |
 |---|---|---|---|
-| D-01 | Yargılayıcı kapanış sorusu yerine tarafsız/aile hatırası sorusu daha çok yorum üretir | mevcut ↔ tarafsız soru | ~2 hafta |
+| D-01 | Yargılayıcı kapanış sorusu yerine tarafsız soru (bilgi yoklaması / somut merak / açık uçlu okuma) daha çok yorum üretir | mevcut ↔ tarafsız soru | ~2 hafta |
 | D-02 | Şaşırtıcı detayla açılan hook daha çok durdurur | düz anlatım ↔ şaşırtıcı detay | ~2 hafta |
 | D-03 | Zincirin 2./3./footer parçaları çoğu kişiye ulaşmıyor; footer'ı daha erkene almak takibi artırır | 3+1 ↔ 2+CTA ↔ tek parça | 2-3 hafta |
 | D-04 | Öğle slotu (Per/Paz 12:07) ek değer katar ve diğerlerini bozmaz | 2/gün ↔ 3/gün (yalnız Per/Paz) | 2 hafta |
