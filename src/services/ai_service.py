@@ -122,6 +122,7 @@ _TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
 RATE_LIMIT_BACKOFF_SECONDS = 5
 SOURCE_BOUND_TIME_BUDGET_SECONDS = 90
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_TIMEOUT_SECONDS = 25.0
 
 SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
 
@@ -473,8 +474,8 @@ class AIService:
     def _source_bound_cascade(self) -> List[Tuple[str, str, str]]:
         """(provider, model, label) in order: Gemini (if configured), then the OpenRouter free models."""
         cascade: List[Tuple[str, str, str]] = []
-        if self._gemini_api_key():
-            cascade.append(("gemini", settings.GEMINI_MODEL, "Gemini"))
+        if self._gemini_api_key() and settings.GEMINI_MODEL.strip():
+            cascade.append(("gemini", settings.GEMINI_MODEL.strip(), "Gemini"))
         if self.api_key:
             cascade.append(("openrouter", settings.AI_MODEL, "Primary"))
             cascade.append(("openrouter", settings.BACKUP_MODEL, "Secondary"))
@@ -502,9 +503,20 @@ class AIService:
         body = {
             "systemInstruction": {"parts": [{"text": system_text}]},
             "contents": contents,
-            "generationConfig": {"temperature": 0.25, "maxOutputTokens": 1200},
+            "generationConfig": {
+                "temperature": 0.25,
+                "maxOutputTokens": 1200,
+                "thinkingConfig": self._gemini_thinking_config(model),
+            },
         }
         return url, headers, body
+
+    @staticmethod
+    def _gemini_thinking_config(model: str) -> dict[str, object]:
+        """Keep thinking to a minimum: Gemini 3.x takes a thinkingLevel, Gemini 2.x a zero thinkingBudget."""
+        if model.startswith("gemini-3"):
+            return {"thinkingLevel": settings.GEMINI_THINKING_LEVEL}
+        return {"thinkingBudget": 0}
 
     @staticmethod
     def _gemini_text(result: dict[str, object]) -> Optional[str]:
@@ -525,7 +537,10 @@ class AIService:
                 url, headers, body = self._gemini_request(model, messages)
             else:
                 url, headers, body = self.url, self.headers, self._openrouter_body(model, messages, base)
-            response = await client.post(url, headers=headers, json=body)
+            if provider == "gemini":
+                response = await client.post(url, headers=headers, json=body, timeout=GEMINI_TIMEOUT_SECONDS)
+            else:
+                response = await client.post(url, headers=headers, json=body)
             if response.status_code != 429:
                 break
             if time.monotonic() + RATE_LIMIT_BACKOFF_SECONDS > deadline:

@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     MODELS_WITHOUT_REASONING_PARAM: str = ""
     # Google AI Studio (Gemini). Key is read from GEMINI_API_KEY; without it the provider is skipped.
     GEMINI_API_KEY: Optional[SecretStr] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    # Empty means Gemini is skipped. Set to a model id verified to return Turkish text.
+    GEMINI_MODEL: str = ""
+    # Thinking control for Gemini 3.x models (thinkingLevel); Gemini 2.x uses thinkingBudget 0.
+    GEMINI_THINKING_LEVEL: str = "minimal"
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///bot_data.db"

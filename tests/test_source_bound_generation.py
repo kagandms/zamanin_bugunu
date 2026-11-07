@@ -1,6 +1,9 @@
 """Source-bound generation for events without a curated fact profile (event-rewrite-v5)."""
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from src.core.config import Settings
@@ -415,3 +418,46 @@ def test_summary_sentence_that_repeats_the_event_is_dropped() -> None:
 
     assert best_overlap_sentence(event, (repeats,)) is None
     assert best_overlap_sentence(event, (repeats, adds)) == adds
+
+
+def test_gemini_is_skipped_when_model_id_is_empty() -> None:
+    import src.services.ai_service as module
+
+    service = AIService()
+    original = module.settings
+    module.settings = Settings(OPENROUTER_API_KEY="openrouter-key", GEMINI_API_KEY="gemini-key", GEMINI_MODEL="")
+    try:
+        providers = [provider for provider, _, _ in service._source_bound_cascade()]
+    finally:
+        module.settings = original
+    assert "gemini" not in providers
+
+
+def test_gemini_request_uses_timeout_and_minimal_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.services.ai_service as module
+
+    seen: list[dict[str, object]] = []
+
+    class Response:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"candidates": [{"content": {"parts": [{"text": "Merhaba."}]}}], "modelVersion": "gemini-3.8-flash"}
+
+    class Client:
+        async def post(self, url: str, **kwargs: object) -> Response:
+            seen.append(kwargs)
+            return Response()
+
+    service = AIService()
+    _, url, body = None, None, None
+    url, headers, body = service._gemini_request("gemini-3.8-flash", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}])
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": module.settings.GEMINI_THINKING_LEVEL}
+    assert body["generationConfig"]["maxOutputTokens"] == 1200
+    assert service._gemini_request("gemini-2.5-flash", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}])[2]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+    status, text, model = asyncio.run(service._call_with_backoff(
+        Client(), "gemini", "gemini-3.8-flash", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+        {}, time.monotonic() + 60, "Gemini",
+    ))
+    assert (status, text) == (200, "Merhaba.")
+    assert seen[0]["timeout"] == module.GEMINI_TIMEOUT_SECONDS == 25.0
