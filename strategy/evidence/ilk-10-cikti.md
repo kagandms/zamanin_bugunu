@@ -1,278 +1,230 @@
-# İlk 10 canlı çıktı (7 Kasım, kaynağa bağlı yorum, yayın yok)
+# İlk 10 canlı çıktı (8 Kasım, yalnızca Gemini, yayın yok)
 
 Bu dosya yalnızca inceleme içindir. Yayın yapılmadı, veritabanına yazılmadı. Üretim açılmadan önce onay bekler.
 
-Kaskad: `google/gemma-4-31b-it:free` → `nvidia/nemotron-3-ultra-550b-a55b:free` → `google/gemma-4-26b-a4b-it:free` → `openrouter/free`. Çağrılar arasında 20 sn bekleme.
+Kaskad: yalnızca Gemini (`GEMINI_MODEL`). OpenRouter'a hiç çağrı yapılmadı. Çağrılar arasında 20 sn bekleme.
 
-Sonuç: 0/10 olay model çıktısıyla üretildi, 10 olay fallback'e düştü.
+Sonuç: 5/10 olay model çıktısıyla üretildi, 5 olay yapılandırılmış fallback'e düştü.
 
-**Bu çalıştırmanın durumu (yapılandırılmış fallback, model çıktısı yok):**
+| # | Olay | Durum | Denemeler |
+|---|---|---|---|
+| 1 | II. Dünya Savaşı: Britanya İmparatorluğu ve ABD, Kuzey Afrika'da Cezayir ve Fas'ı işgal et | geçti | gemini-3.5-flash=200 |
+| 2 | İkinci Dağlık Karabağ Savaşı'nda Azerbaycan güçleri Şuşa şehrini Ermeni işgalinden kurtard | geçti | gemini-3.5-flash=200 |
+| 3 | Almanya'da Adolf Hitler ve yandaşları tarihe "Birahane Darbesi" olarak geçecek olan olayla | geçti | gemini-3.5-flash=200 |
+| 4 | Robert Catesby, 1605'te, İngiliz parlamentosunu havaya uçurmak için bir araya gelen 12 kiş | fallback: unsupported_words | gemini-3.5-flash=200 |
+| 5 | İngiliz Rock topluluğu Led Zeppelin'in 4. albümleri çıktı. Albümde grubun en çok bilinen ş | fallback: unsupported_words | gemini-3.5-flash=200 |
+| 6 | Alfre Woodard, Amerikalı sinema, dizi ve tiyatro oyuncusu, yapımcı ve siyasal eylemci | fallback: unsupported_words | gemini-3.5-flash=200 |
+| 7 | Tatsuya Nakadai, Japon oyuncu (d. 1932) | fallback: unsupported_words | gemini-3.5-flash=200 |
+| 8 | Montana, ABD'nin 41. Eyaleti oldu. | geçti | gemini-3.5-flash=200 |
+| 9 | Felix Hausdorff, Alman matematikçi (ö. 1942) | geçti | gemini-3.5-flash=200 |
+| 10 | ABD başkanlık seçimlerinde Cumhuriyetçi aday George H. W. Bush seçildi. | fallback: unsupported_words,language | gemini-3.5-flash=200 |
 
-- `gemini-2.5-flash`: 404, "artık yeni kullanıcılara açık değil". Ortamda `GEMINI_API_KEY` tanımlı, `.env`'de yok; anahtar değeri kaydedilmedi. `gemini-2.5-flash-lite`: 404. `gemini-flash-latest`: istek zaman aşımına uğradı. Modeller listesi (`generateContent` destekleyen) alındı; `GEMINI_MODEL` ortam değişkeni ile çalışan bir kimlik seçilmeli.
-- `nvidia/nemotron-3-ultra-550b-a55b:free` ve `google/gemma-4-31b-it:free`: "free-models-per-day" günlük kotası doldu (429). Bu geçici değil, günlük; yeniden deneme bu gün sonuç vermez.
-- Sonuç: 10/10 yapılandırılmış fallback; model çıktısı yok.
+## 1. II. Dünya Savaşı: Britanya İmparatorluğu ve ABD, Kuzey Afrika'da Cezayir ve Fas'ı işgal ettiler.
 
-| # | Olay | Durum | Model | Denemeler |
-|---|---|---|---|---|
-| 1 | Müslümanlar arasındaki ilk iç savaş olan Cemel Savaşı gerçekleşti. | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 2 | 1982 Anayasası için halk oylaması yapıldı. Anayasa, %91,37 "KABUL" oyuyla kabul edildi. Ke | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 3 | ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bus | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 4 | Birleşik Devletler kuvvetleri ile Şavniler arasında Tippecanoe Muharebesi gerçekleşti. | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 5 | Richard Nixon ABD Başkanı seçildi. | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 6 | Brad Harris, Amerikalı oyuncu, dublör ve yapımcı (d. 1933) | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 7 | Barbara Liskov, Amerikalı bilgisayar bilimcisi | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 8 | Lev Troçki, Rus Bolşevik siyasetçi, devrimci ve Marksist teorisyen (1917 Rus devriminin ön | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 9 | Ögeday Han, Moğol İmparatoru ve Cengiz Han'ın oğlu (ö. 1241) | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-| 10 | Chaine Staelens, Hollandalı voleybolcu | fallback: http_error,rate_limited | - | gemini-2.5-flash=404, nvidia/nemotron-3-ultra-550b-a55b:free=429, nvidia/nemotron-3-ultra-550b-a55b:free=429, google/gemma-4-31b-it:free=429 |
-
-## 1. Müslümanlar arasındaki ilk iç savaş olan Cemel Savaşı gerçekleşti.
-
-- Yıl: 656
-- Kaynak özeti: Cemel Muharebesi, Cemel Vakası, Basra Savaşı ya da Deve Olayı 8 Aralık 656 tarihinde, Halife Ali bin Ebu Talib ile İslam Peygamberi Muhammed'in dul eşi Aişe'nin taraftarları arasında, Basra'da gerçekleşen muharebe. Müslümanlar arasındaki ilk iç savaştır. Cemel Savaşı, Ali'nin zaferiyle sonuçlandı.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
+- Yıl: 1942
+- Kaynak özeti: Savaşa dönemin büyük güçleri ve dünya ülkelerinin büyük çoğunluğu katıldı, Müttefikler ve Mihver olmak üzere iki karşıt askerî ittifak kuruldu. 70 ila 85 milyon insanın ölümüyle sonuçlanan II. Dünya Savaşı, insanlık tarihindeki en ölümcül savaştı ve savaş boyunca askerî personelden daha çok sivil kayıp verildi.
+- Üretim tipi: `ai_source_bound`
+- Model: gemini-3.6-flash
+- Ret nedeni: -
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: ⚔️ ⏎ --- ⏎ Britanya İmparatorluğu ve ABD, 1942 yılında Kuzey Afrika'da Cezayir ve Fas'ı işgal ettiler. #tarih ⏎ --- ⏎ Savaşa dönemin büyük güçleri ve dünya ülkelerinin büyük çoğunluğu katıldı; Müttefikler ve Mihver olmak üzere iki karşıt askerî ittifak kuruldu. 70 ila 85 milyon insanın ölümüy
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.656)
+> ⚔️ Tarihte Bugün (8.11.1942)
 > 
-> Müslümanlar arasındaki ilk iç savaş olan Cemel Savaşı gerçekleşti. Cemel Muharebesi, Cemel Vakası, Basra Savaşı ya da Deve Olayı 8 Aralık 656 tarihinde, Halife Ali bin Ebu Talib ile İslam Peygamberi Muhammed'in dul eşi Aişe'nin taraftarları arasında, Basra'da gerçekleşen muharebe. #tarih
+> Britanya İmparatorluğu ve ABD, 1942 yılında Kuzey Afrika'da Cezayir ve Fas'ı işgal ettiler. #tarih
 >
-> Bu ayrıntıyı daha önce duymuş muydunuz?
-
-## 2. 1982 Anayasası için halk oylaması yapıldı. Anayasa, %91,37 "KABUL" oyuyla kabul edildi. Kenan Evren, Türkiye'nin 7. Cumhurbaşkanı oldu.
-
-- Yıl: 1982
-- Kaynak özeti: Dönemin Devlet Başkanı Kenan Evren, Anayasa'nın ilk üç maddesinin "değiştirilemeyeceğini ve değiştirilmesinin teklif edilemeyeceğini" dördüncü madde olarak taslağa ekletmiştir. Anayasa, 7 Kasım 1982 Pazar günü yapılan halk oylaması sonucu yüzde 91,37 oranında kabul oyu ile kabul edilmiştir.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
-
-**Denemeler:**
-
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
-
-> 🕊️ Tarihte Bugün (7.11.1982)
-> 
-> 1982 Anayasası için halk oylaması yapıldı. Anayasa, %91,37 "KABUL" oyuyla kabul edildi. Kenan Evren, Türkiye'nin 7. Cumhurbaşkanı oldu. Anayasa, 7 Kasım 1982 Pazar günü yapılan halk oylaması sonucu yüzde 91,37 oranında kabul oyu ile kabul edilmiştir. #tarih
+> Savaşa dönemin büyük güçleri ve dünya ülkelerinin büyük çoğunluğu katıldı; Müttefikler ve Mihver olmak üzere iki karşıt askerî ittifak kuruldu. 70 ila 85 milyon insanın ölümüyle sonuçlanan II. Dünya Savaşı, insanlık tarihindeki en ölümcül savaştı ve savaş boyunca askerî personelden daha çok sivil kayıp verildi.
 >
-> Bu ayrıntıyı daha önce duymuş muydunuz?
+> Bu olayı bugün nasıl okuyorsunuz?
 
-## 3. ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bush'tan daha fazla oy almasına rağmen, hayli tartışmalı bir belirsizlik döneminden sonra, ABD Yüksek Mahkemesi'nin kararıyla, George W. Bush 12 Aralık 2000'de Başkan ilan edildi.
+## 2. İkinci Dağlık Karabağ Savaşı'nda Azerbaycan güçleri Şuşa şehrini Ermeni işgalinden kurtardı. Bu tarih daha sonra Zafer Bayramı ilan edildi.
 
-- Yıl: 2000
-- Kaynak özeti: Bush'un en büyük oğlu olan Cumhuriyetçi aday Teksas Valisi George W. Bush, Demokrat Başkan Yardımcısı Al Gore'u ufak bir farkla yenerek ABD'nin 43. Seçimi kaybeden aday Al Gore, Yüksek Mahkemenin seçim hakkındaki kararını açıklamasından sonra 13 Aralık'ta Bush'u tebrik etti.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
+- Yıl: 2020
+- Kaynak özeti: İkinci Dağlık Karabağ Savaşı, 2020 Dağlık Karabağ Savaşı veya 44 Günlük Savaş Dağlık Karabağ'da Türkiye destekli Azerbaycan ile Ermenistan ve onun desteklediği tanınmayan Dağlık Karabağ Cumhuriyeti arasında yaşanmış silahlı çatışmalardır.
+- Üretim tipi: `ai_source_bound`
+- Model: gemini-3.6-flash
+- Ret nedeni: -
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: ⚔️ ⏎ --- ⏎ Azerbaycan güçleri, İkinci Dağlık Karabağ Savaşı'nda Şuşa şehrini Ermeni işgalinden kurtardı ve bu tarih daha sonra Zafer Bayramı ilan edildi. #tarih ⏎ --- ⏎ 2020 yılında yaşanan ve 44 Günlük Savaş olarak da bilinen İkinci Dağlık Karabağ Savaşı, Dağlık Karabağ'da gerçekleşti. Çatış
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.2000)
+> ⚔️ Tarihte Bugün (8.11.2020)
 > 
-> ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bush'tan daha fazla oy almasına rağmen, hayli tartışmalı bir belirsizlik döneminden sonra, ABD Yüksek Mahkemesi'nin kararıyla, George W. Bush 12 Aralık 2000'de Başkan ilan edildi. Seçimi kaybeden aday Al Gore, Yüksek Mahkemenin seçim hakkındaki kararını açıklamasından sonra 13 Aralık'ta Bush'u tebrik etti. #tarih
+> Azerbaycan güçleri, İkinci Dağlık Karabağ Savaşı'nda Şuşa şehrini Ermeni işgalinden kurtardı ve bu tarih daha sonra Zafer Bayramı ilan edildi. #tarih
 >
-> Bu ayrıntıyı daha önce duymuş muydunuz?
-
-## 4. Birleşik Devletler kuvvetleri ile Şavniler arasında Tippecanoe Muharebesi gerçekleşti.
-
-- Yıl: 1811
-- Kaynak özeti: Tippecanoe Muharebesi, 7 Kasım 1811 tarihinde Indiana Toprakları(Indiana Territory) Valisi William Henry Harrison kumandasındaki Birleşik Devletler kuvvetleri ve Shawnee kabilesinin lideri Tecumseh ile bağlantılı Kızılderili savaşçılar arasında yapılan bir muharebedir. Gerilim ve şiddet arttıkça, Vali Harrison konfederasyonun Prophetstown'daki merkezini dağıtmak için yaklaşık 1.000 kişilik bir orduyla Tippecanoe ve Wabash nehirlerinin birleştiği noktaya yürüdü.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
-
-**Denemeler:**
-
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
-
-> 🕊️ Tarihte Bugün (7.11.1811)
-> 
-> Birleşik Devletler kuvvetleri ile Şavniler arasında Tippecanoe Muharebesi gerçekleşti. Tippecanoe Muharebesi, 7 Kasım 1811 tarihinde Indiana Toprakları(Indiana Territory) Valisi William Henry Harrison kumandasındaki Birleşik Devletler kuvvetleri ve Shawnee kabilesinin lideri Tecumseh ile bağlantılı Kızılderili savaşçılar arasında yapılan bir muharebedir. #tarih
+> 2020 yılında yaşanan ve 44 Günlük Savaş olarak da bilinen İkinci Dağlık Karabağ Savaşı, Dağlık Karabağ'da gerçekleşti. Çatışmalar; Türkiye destekli Azerbaycan ile Ermenistan ve onun desteklediği tanınmayan Dağlık Karabağ Cumhuriyeti arasında yaşanmış silahlı çatışmalardır.
 >
-> Bu ayrıntıyı daha önce duymuş muydunuz?
+> Bu olayı bugün nasıl okuyorsunuz?
 
-## 5. Richard Nixon ABD Başkanı seçildi.
+## 3. Almanya'da Adolf Hitler ve yandaşları tarihe "Birahane Darbesi" olarak geçecek olan olayla Bavyera eyaletinin yönetimini ele geçirmek için ayaklandı.
 
-- Yıl: 1972
-- Kaynak özeti: 1972 Amerika Birleşik Devletleri başkanlık seçimleri, 7 Kasım 1972 tarihinde Mevcut Cumhuriyetçi Başkan Richard Nixon ile Demokrat aday Güney Dakota Senatörü George McGovern arasında gerçekleşti. Seçimleri oyların büyük çoğunluğunu alan mevcut Cumhuriyetçi Başkan Richard Nixon kazandı.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
+- Yıl: 1923
+- Kaynak özeti: Birahane Darbesi, Adolf Hitler, General Erich Ludendorff ve diğer Kampfbund liderleri tarafından Bavyera eyaletinin yönetimine el koymak amacıyla 8-9 Kasım 1923 tarihinde gerçekleştirdiği başarısız bir darbe girişimidir.
+- Üretim tipi: `ai_source_bound`
+- Model: gemini-3.6-flash
+- Ret nedeni: -
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: ⚔️ ⏎ --- ⏎ Adolf Hitler ve yandaşları, Bavyera eyaletinin yönetimini ele geçirmek için ayaklandı. #tarih ⏎ --- ⏎ Birahane Darbesi olarak geçen bu olay; Adolf Hitler, General Erich Ludendorff ve diğer Kampfbund liderleri tarafından Bavyera eyaletinin yönetimine el koymak amacıyla 8-9 Kasım 192
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.1972)
+> ⚔️ Tarihte Bugün (8.11.1923)
 > 
-> Richard Nixon ABD Başkanı seçildi. 1972 Amerika Birleşik Devletleri başkanlık seçimleri, 7 Kasım 1972 tarihinde Mevcut Cumhuriyetçi Başkan Richard Nixon ile Demokrat aday Güney Dakota Senatörü George McGovern arasında gerçekleşti. #tarih
+> Adolf Hitler ve yandaşları, Bavyera eyaletinin yönetimini ele geçirmek için ayaklandı. #tarih
 >
-> Bu ayrıntıyı daha önce duymuş muydunuz?
+> Birahane Darbesi olarak geçen bu olay; Adolf Hitler, General Erich Ludendorff ve diğer Kampfbund liderleri tarafından Bavyera eyaletinin yönetimine el koymak amacıyla 8-9 Kasım 1923 tarihinde gerçekleştirdiği başarısız bir darbe girişimidir.
+>
+> Bu darbe girişimini daha önce duymuş muydunuz?
 
-## 6. Brad Harris, Amerikalı oyuncu, dublör ve yapımcı (d. 1933)
+## 4. Robert Catesby, 1605'te, İngiliz parlamentosunu havaya uçurmak için bir araya gelen 12 kişilik "Barut Komplosu" ekibin lideri (d. 1572)
 
-- Yıl: 2017
-- Kaynak özeti: Bradford Harris, Amerikalı oyuncu, dublör ve yapımcıdır. Harris önceleri dublörlük yapmış daha sonra André de Toth's Monkey on My Back ve Li'l Abner adlı filmlerle ilk defa beyazperdede yer alarak oyunculuğa adım attı.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
+- Yıl: 1605
+- Kaynak özeti: Barut komplosu, bir grup yönetim karşıtı İngiliz Katolik tarafından, İngiltere Kralı I. James ve diğer aristokratları öldürmek için 5 Kasım 1605'te yapılan, Parlamento binasını havaya uçurma girişimidir. Robert Catesby ve Guy Fawkes öncülüğünde planlanmıştır.
+- Üretim tipi: `source_fallback:unsupported_words:structured`
 - Model: -
-- Ret nedeni: http_error,rate_limited
+- Ret nedeni: unsupported_words
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: ⚔️ ⏎ --- ⏎ İngiliz parlamentosunu havaya uçurmak için 12 kişilik bir ekip bir araya geldi; liderleri Robert Catesby idi. #tarih ⏎ --- ⏎ Barut komplosu, Robert Catesby ve Guy Fawkes öncülüğünde, İngiltere Kralı I. James ve diğer aristokratları öldürmek için 5 Kasım 1605'te yapılan bir Parlamen
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.2017)
+> 🕊️ Tarihte Bugün (8.11.1605)
 > 
-> Brad Harris, Amerikalı oyuncu, dublör ve yapımcı (d. 1933). Harris önceleri dublörlük yapmış daha sonra André de Toth's Monkey on My Back ve Li'l Abner adlı filmlerle ilk defa beyazperdede yer alarak oyunculuğa adım attı. #tarih
+> Robert Catesby, 1605'te, İngiliz parlamentosunu havaya uçurmak için bir araya gelen 12 kişilik "Barut Komplosu" ekibin lideri (d. 1572). Barut komplosu, bir grup yönetim karşıtı İngiliz Katolik tarafından, İngiltere Kralı I. #tarih
 >
 > Bu ismi tanıyor muydunuz?
 
-## 7. Barbara Liskov, Amerikalı bilgisayar bilimcisi
+## 5. İngiliz Rock topluluğu Led Zeppelin'in 4. albümleri çıktı. Albümde grubun en çok bilinen şarkısı "Stairway to Heaven" var.
 
-- Yıl: 1939
-- Kaynak özeti: Barbara Liskov, Amerikalı bilgisayar bilimcisi. Massachusetts Teknoloji Enstitüsü'nde profesör olarak çalışan Liskov Amerika Birleşik Devletleri'nde bilgisayar bilimi doktorası sahibi ilk kadınlardan biridir.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
+- Yıl: 1971
+- Kaynak özeti: "Stairway to Heaven", İngiliz rock grubu Led Zeppelin tarafından 8 Kasım 1971'de piyasaya sürülen şarkı. Grubun gitaristi Jimmy Page ve vokalisti Robert Plant tarafından isimsiz dördüncü stüdyo albümleri için bestelenmiştir. Genellikle tüm zamanların en popüler rock şarkılarından biri olarak kabul edilmektedir.
+- Üretim tipi: `source_fallback:unsupported_words:structured`
 - Model: -
-- Ret nedeni: http_error,rate_limited
+- Ret nedeni: unsupported_words
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🎭 ⏎ --- ⏎ Led Zeppelin'in dördüncü stüdyo albümünde yer alan "Stairway to Heaven", tüm zamanların en popüler rock şarkılarından biri olarak kabul edilmektedir. #tarih ⏎ --- ⏎ İngiliz rock grubunun gitaristi Jimmy Page ve vokalisti Robert Plant tarafından isimsiz albüm için bestelenen eser, 8 
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.1939)
+> 🕊️ Tarihte Bugün (8.11.1971)
 > 
-> Barbara Liskov, Amerikalı bilgisayar bilimcisi. Massachusetts Teknoloji Enstitüsü'nde profesör olarak çalışan Liskov Amerika Birleşik Devletleri'nde bilgisayar bilimi doktorası sahibi ilk kadınlardan biridir. #tarih
+> İngiliz Rock topluluğu Led Zeppelin'in 4. albümleri çıktı. Albümde grubun en çok bilinen şarkısı "Stairway to Heaven" var. Grubun gitaristi Jimmy Page ve vokalisti Robert Plant tarafından isimsiz dördüncü stüdyo albümleri için bestelenmiştir. #tarih
 >
 > Bu ayrıntıyı daha önce duymuş muydunuz?
 
-## 8. Lev Troçki, Rus Bolşevik siyasetçi, devrimci ve Marksist teorisyen (1917 Rus devriminin önde gelen isimlerinden) (ö. 1940)
+## 6. Alfre Woodard, Amerikalı sinema, dizi ve tiyatro oyuncusu, yapımcı ve siyasal eylemci
 
-- Yıl: 1879
-- Kaynak özeti: Lev Davidoviç Bronştayn ya da yaygın bilinen adıyla Lev Troçki ; Rus devrimci, Sovyet siyasetçi ve siyasi teorisyendir. İdeolojik olarak bir Marksist ve Leninist olan Troçki'nin fikirleri, Troçkizm olarak bilinen bir Marksizm düşüncesine ilham oldu.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
+- Yıl: 1952
+- Kaynak özeti: Alfre Woodard, Amerikalı sinema, dizi ve tiyatro oyuncusu, yapımcı ve siyasal eylemci. Woodard Akademi Ödülü ve Grammy Ödülü'ne birer kez aday gösterilmiş; 18 kez aday gösterildiği Emmy Ödülü'ne 4 kez değer görülmüş, Altın Küre Ödülü'nü bir, Sinema Oyuncuları Derneği Ödülü'nü ise üç kez kazanmıştır.
+- Üretim tipi: `source_fallback:unsupported_words:structured`
 - Model: -
-- Ret nedeni: http_error,rate_limited
+- Ret nedeni: unsupported_words
 
 **Denemeler:**
 
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🎭 ⏎ --- ⏎ Alfre Woodard, 18 kez aday gösterildiği Emmy Ödülü'nü 4 kez kazandı. Amerikalı sinema, dizi ve tiyatro oyuncusu, yapımcı ve siyasal eylemci 1952 yılında doğdu. #tarih ⏎ --- ⏎ Woodard; Akademi Ödülü ve Grammy Ödülü'ne birer kez aday gösterildi. Altın Küre Ödülü'nü bir, Sinema Oyuncul
 
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
 
-> 🕊️ Tarihte Bugün (7.11.1879)
+> 🕊️ Tarihte Bugün (8.11.1952)
 > 
-> Lev Troçki, Rus Bolşevik siyasetçi, devrimci ve Marksist teorisyen (1917 Rus devriminin önde gelen isimlerinden) (ö. 1940). Lev Davidoviç Bronştayn ya da yaygın bilinen adıyla Lev Troçki ; Rus devrimci, Sovyet siyasetçi ve siyasi teorisyendir. #tarih
->
-> Bu ismi tanıyor muydunuz?
-
-## 9. Ögeday Han, Moğol İmparatoru ve Cengiz Han'ın oğlu (ö. 1241)
-
-- Yıl: 1186
-- Kaynak özeti: Ögeday, Moğol İmparatorluğu'nun ikinci hanı ve Cengiz Han'ın üçüncü oğluydu. 1186 yılında doğan Ögeday, babasının iktidara gelmesi sırasında birçok savaşta savaştı ve Moğolların Harzemşah İmparatorluğu'nu işgalinde önemli roller üstlendi.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
-
-**Denemeler:**
-
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
-
-> 🕊️ Tarihte Bugün (7.11.1186)
-> 
-> Ögeday Han, Moğol İmparatoru ve Cengiz Han'ın oğlu (ö. 1241). Ögeday, Moğol İmparatorluğu'nun ikinci hanı ve Cengiz Han'ın üçüncü oğluydu. #tarih
->
-> Bu ismi tanıyor muydunuz?
-
-## 10. Chaine Staelens, Hollandalı voleybolcu
-
-- Yıl: 1980
-- Kaynak özeti: Chaïne Staelens Belçika kökenli Hollandalı voleybolcu. Belçikalı voleybolcu bir baba ve Hollandalı voleybolcu bir annenin çocuğu olarak voleybola Belçika’da başladı. Daha sonra voleybol kariyerini Hollanda’da sürdürdü.
-- Üretim tipi: `source_fallback:http_error,rate_limited:structured`
-- Model: -
-- Ret nedeni: http_error,rate_limited
-
-**Denemeler:**
-
-- `gemini-2.5-flash` HTTP 404: { ⏎   "error": { ⏎     "code": 404, ⏎     "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://aistudio.google.com/doc
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `nvidia/nemotron-3-ultra-550b-a55b:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-- `google/gemma-4-31b-it:free` HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1794096000000"},"limit_source":"openrouter_free_tier_daily","remedy_hi
-
-**Yayımlanacak metin (kod başlığı + model gövdesi):**
-
-> 🕊️ Tarihte Bugün (7.11.1980)
-> 
-> Chaine Staelens, Hollandalı voleybolcu. Chaïne Staelens Belçika kökenli Hollandalı voleybolcu. #tarih
+> Alfre Woodard, Amerikalı sinema, dizi ve tiyatro oyuncusu, yapımcı ve siyasal eylemci. Woodard Akademi Ödülü ve Grammy Ödülü'ne birer kez aday gösterilmiş; 18 kez aday gösterildiği Emmy Ödülü'ne 4 kez değer görülmüş, Altın Küre Ödülü'nü bir, Sinema Oyuncuları Derneği Ödülü'nü ise üç kez kazanmıştır. #tarih
 >
 > Bu ayrıntıyı daha önce duymuş muydunuz?
 
-## Tam akış kuru çalıştırması (DRY_RUN, kopya veritabanı)
+## 7. Tatsuya Nakadai, Japon oyuncu (d. 1932)
 
-Akış: olay seçimi → hazırlama → rezervasyon → yapılandırılmış fallback → kuru yayın. OpenRouter anahtarı boş bırakıldı (OpenRouter'a çağrı yok). Yayın adaptörleri kuru sahte; kapı sahte (Git'e commit/push yok). Gerçek `bot_data.db` değişmedi (sha aynı); kopyaya bir kayıt eklendi (event_id 270).
+- Yıl: 2025
+- Kaynak özeti: Tatsuya Nakadai , Japon oyuncudur. Sinemaya Akira Kurosawa'nin ünlü filmi Yedi Samuray'daki ufak bir rol ile başlamıș, ilerleyen yıllarda Masaki Kobayashi'nin yönettiği filmlerde kendini kanıtlayarak Japonya'nın en tanınan oyuncularndan biri haline gelmiștir.
+- Üretim tipi: `source_fallback:unsupported_words:structured`
+- Model: -
+- Ret nedeni: unsupported_words
 
-```
-[PREP] event: ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bus
-[PREP] generation_type: source_fallback:http_error:structured | parts: 2
-[DRY] gate authorized event_id=270 (no git checkpoint)
-[DRY] telegram would post 470 chars, image=yes
-[DRY] threads would post 2 parts
-[PUBLISH] stopped: No platform main artifact was confirmed; reconciliation required
-```
+**Denemeler:**
 
-- Üretim tipi: `source_fallback:http_error:structured`; görsel: `wikipedia_thumbnail`.
-- Yayın sonucu: `stopped: No platform main artifact was confirmed; reconciliation required`. Kuru adaptörler `dry_run` döndürdüğü için kod bunu onaylı ana gönderi saymadı; beklenen davranış.
-- Kuru çıktı (Telegram/Threads kısmı):
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🎭 ⏎ --- ⏎ Japon oyuncu Tatsuya Nakadai, sinemaya Akira Kurosawa'nın ünlü filmi Yedi Samuray'daki ufak bir rol ile başladı. #tarih ⏎ --- ⏎ İlerleyen yıllarda Masaki Kobayashi'nin yönettiği filmlerde kendini kanıtlayarak Japonya'nın en tanınan oyuncularından biri haline geldi. 1932 doğumlu oyun
 
-> 🕊️ Tarihte Bugün (7.11.2000)
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
+
+> 🕊️ Tarihte Bugün (8.11.2025)
 > 
-> ABD'de Başkanlık seçimleri yapıldı. Demokrat aday Al Gore, Cumhuriyetçi aday George W. Bush'tan daha fazla oy almasına rağmen, hayli tartışmalı bir belirsizlik döneminden sonra, ABD Yüksek Mahkemesi'nin kararıyla, George W. Bush 12 Aralık 2000'de Başkan ilan edildi. #tarih
+> Tatsuya Nakadai, Japon oyuncu (d. 1932). Sinemaya Akira Kurosawa'nin ünlü filmi Yedi Samuray'daki ufak bir rol ile başlamıș, ilerleyen yıllarda Masaki Kobayashi'nin yönettiği filmlerde kendini kanıtlayarak Japonya'nın en tanınan oyuncularndan biri haline gelmiștir. #tarih
+>
+> Bu ismi tanıyor muydunuz?
+
+## 8. Montana, ABD'nin 41. Eyaleti oldu.
+
+- Yıl: 1889
+- Kaynak özeti: Alan bakımından dördüncü büyük eyalet olmasına rağmen, nüfus bakımından sekizinci, nüfus yoğunluğu bakımından ise üçüncü en düşük eyalettir. Eyaletin batı yarısı, özellikle Rocky Dağları olmak üzere çok sayıda sıradağ içerirken, doğu yarısı batı bozkır arazisi ve çorak arazilerle karakterize edilir ve eyalet genelinde daha küçük sıradağlar bulunur.
+- Üretim tipi: `ai_source_bound`
+- Model: gemini-3.6-flash
+- Ret nedeni: -
+
+**Denemeler:**
+
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🌍 ⏎ --- ⏎ Montana, 1889 yılında ABD'nin 41. eyaleti oldu. Alan bakımından dördüncü büyük eyalet olmasına rağmen nüfus bakımından sekizinci, nüfus yoğunluğu bakımından ise üçüncü en düşük eyalettir. #tarih ⏎ --- ⏎ Eyaletin batı yarısı, özellikle Rocky Dağları olmak üzere çok sayıda sıradağ içe
+
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
+
+> 🌍 Tarihte Bugün (8.11.1889)
+> 
+> Montana, 1889 yılında ABD'nin 41. eyaleti oldu. Alan bakımından dördüncü büyük eyalet olmasına rağmen nüfus bakımından sekizinci, nüfus yoğunluğu bakımından ise üçüncü en düşük eyalettir. #tarih
+>
+> Eyaletin batı yarısı, özellikle Rocky Dağları olmak üzere çok sayıda sıradağ içerirken, doğu yarısı batı bozkır arazisi ve çorak arazilerle karakterize edilir ve eyalet genelinde daha küçük sıradağlar bulunur.
+>
+> Bu eyaletin coğrafi özelliklerini ve nüfus yapısını daha önce duymuş muydunuz?
+
+## 9. Felix Hausdorff, Alman matematikçi (ö. 1942)
+
+- Yıl: 1868
+- Kaynak özeti: Felix Hausdorff, modern topolojinin kurucularından biri olarak kabul edilen ve küme teorisine, tanımlayıcı küme teorisine, ölçü teorisine ve fonksiyonel analize önemli katkılarda bulunan bir Alman matematikçi.
+- Üretim tipi: `ai_source_bound`
+- Model: gemini-3.6-flash
+- Ret nedeni: -
+
+**Denemeler:**
+
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🔬 ⏎ --- ⏎ Modern topolojinin kurucularından kabul edilen Alman matematikçi Felix Hausdorff 1868 yılında doğdu ve 1942 yılında öldü. #tarih ⏎ --- ⏎ Hausdorff, küme teorisine, tanımlayıcı küme teorisine, ölçü teorisine ve fonksiyonel analize katkılarda bulundu. ⏎ --- ⏎ Hausdorff'un matematiğe o
+
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
+
+> 🔬 Tarihte Bugün (8.11.1868)
+> 
+> Modern topolojinin kurucularından kabul edilen Alman matematikçi Felix Hausdorff 1868 yılında doğdu ve 1942 yılında öldü. #tarih
+>
+> Hausdorff, küme teorisine, tanımlayıcı küme teorisine, ölçü teorisine ve fonksiyonel analize katkılarda bulundu.
+>
+> Hausdorff'un matematiğe olan bu katkılarını daha önce duymuş muydunuz?
+
+## 10. ABD başkanlık seçimlerinde Cumhuriyetçi aday George H. W. Bush seçildi.
+
+- Yıl: 1988
+- Kaynak özeti: 1988 Amerika Birleşik Devletleri başkanlık seçimleri, 8 Kasım 1988 tarihinde Mevcut Cumhuriyetçi Başkan yardımcısı George H. Seçimleri Mevcut Cumhuriyetçi Başkan yardımcısı George H.
+- Üretim tipi: `source_fallback:unsupported_words,language:structured`
+- Model: -
+- Ret nedeni: unsupported_words,language
+
+**Denemeler:**
+
+- `gemini-3.5-flash` HTTP 200: EMOJI: 🏛️ ⏎ --- ⏎ Cumhuriyetçi aday George H. W. Bush, 1988 ABD başkanlık seçimlerinde başkan seçildi. #tarih ⏎ --- ⏎ 8 Kasım 1988 tarihinde gerçekleşen seçimlerde, mevcut Cumhuriyetçi Başkan yardımcısı George H. W. Bush sandıktan zaferle çıktı. ⏎ --- ⏎ Bu seçimi daha önce duymuş muydunuz?
+
+**Yayımlanacak metin (kod başlığı + model gövdesi veya yapılandırılmış fallback):**
+
+> 🕊️ Tarihte Bugün (8.11.1988)
+> 
+> ABD başkanlık seçimlerinde Cumhuriyetçi aday George H. W. Bush seçildi. 1988 Amerika Birleşik Devletleri başkanlık seçimleri, 8 Kasım 1988 tarihinde Mevcut Cumhuriyetçi Başkan yardımcısı George H. #tarih
+>
 > Bu ayrıntıyı daha önce duymuş muydunuz?
