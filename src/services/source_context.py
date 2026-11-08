@@ -83,9 +83,15 @@ def _event_identities(evidence: SourceContextInput) -> tuple[tuple[tuple[str, ..
     return tuple(dict.fromkeys(identities))
 
 
+# Dots that do not end a sentence: initials ("George H."), Roman numerals ("II."), common abbreviations.
+_ABBREVIATION_DOT = re.compile(
+    r"\b(?:[A-ZÇĞİÖŞÜ]|[IVXLCDM]{1,4}|Dr|Prof|Doç|Bkz|St|Mr|Mrs|Ms|Jr|Sr|Ltd|vb|vs|örn|Dk|Sn|Mö)\.",
+)
+
+
 def _complete_sentences(extract: str) -> tuple[str, ...]:
     bounded = extract[:MAX_SOURCE_CHARS]
-    protected = re.sub(r"\b(II|III|IV|Dr|Prof|Doç|Bkz)\.", r"\1∯", bounded)
+    protected = _ABBREVIATION_DOT.sub(lambda match: match.group(0)[:-1] + "∯", bounded)
     sentences = re.findall(r"\S.*?[.!?](?:[\"”’)]*)(?=\s|$)", protected, re.DOTALL)
     return tuple(sentence.replace("∯", ".").strip() for sentence in sentences
                  if not re.search(r"(?:\.\.\.|…)", sentence) and not sentence.endswith(".."))
@@ -261,6 +267,16 @@ def summary_sentences(title: str | None, extract: str, evidence: SourceContextIn
     return _page_summary(title, extract, evidence)
 
 
+def _is_event_label(title: str, event_text: str) -> bool:
+    """True when the event text opens with a label equal to this page's title (a broad topic page)."""
+    if ":" not in event_text:
+        return False
+    label = event_text.split(":", 1)[0]
+    if len(label) > 80:
+        return False
+    return tuple(_words(label)) == tuple(_words(re.sub(r"\([^)]*\)", "", title)))
+
+
 def select_event_summary(candidate: Mapping[str, object]) -> SelectedSource | None:
     """Choose the page that best describes the event and return its bounded summary.
 
@@ -277,6 +293,9 @@ def select_event_summary(candidate: Mapping[str, object]) -> SelectedSource | No
         title = str((page.get("titles") or {}).get("canonical") or page.get("title") or "")
         extract = page.get("extract")
         if not title or not isinstance(extract, str) or _has_conflicting_title_year(title, event):
+            continue
+        if _is_event_label(title, event_text):
+            # "II. Dünya Savaşı: ..." – a page titled with the event's own label describes the broad topic.
             continue
         sentences = _page_summary(title, extract, event)
         if not sentences:

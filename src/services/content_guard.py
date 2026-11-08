@@ -327,7 +327,7 @@ def validate_source_bound_content(
     if any(len(block) > max_block_chars for block in blocks):
         reasons.append("length")
     evidence = _source_evidence_text(request)
-    text = "\n".join(blocks)
+    text = "\n".join(blocks[:-1] if len(blocks) > 1 else blocks)  # the model question is replaced in code
     if _unsupported_numbers(text, evidence):
         reasons.append("unsupported_number")
     if _unsupported_names(text, evidence):

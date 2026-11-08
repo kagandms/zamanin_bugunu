@@ -107,7 +107,9 @@ async def test_profileless_event_uses_model_output_with_code_owned_header_and_ta
 
     assert parts[0].startswith("🏛️ Tarihte Bugün (20.10.1921)\n\n")
     assert parts[0].rstrip().endswith("#tarih")
-    assert parts[1] == GOOD_QUESTION
+    from src.services.structured_fallback import FALLBACK_QUESTIONS
+
+    assert parts[1] in FALLBACK_QUESTIONS and parts[1] != GOOD_QUESTION
     assert len(parts) == 2
     assert service.last_generation_type == "ai_source_bound"
     assert service.last_source_fact_status == "not_checked"

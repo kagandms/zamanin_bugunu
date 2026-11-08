@@ -16,7 +16,7 @@ from src.services.content_guard import (
     validate_event_content,
     validate_source_bound_content,
 )
-from src.services.structured_fallback import build_structured_parts
+from src.services.structured_fallback import build_structured_parts, choose_fallback_question
 from src.utils.text_utils import (
     clean_twitter_text,
     sanitize_http_header_value,
@@ -619,7 +619,8 @@ class AIService:
                         rejections.extend(reasons)
                         logger.warning(f"{label} Model ({model}) rejected: {','.join(reasons)}")
                         continue
-                    parts = self._assemble_source_bound_parts(emoji, blocks, request.formatted_date)
+                    question = choose_fallback_question(self.recent_published_texts, request.original_text)
+                    parts = self._assemble_source_bound_parts(emoji, blocks, request.formatted_date, question)
                     if any(len(part) > block_limit for part in parts):
                         rejections.append("length")
                         continue
@@ -681,13 +682,15 @@ class AIService:
         return DEFAULT_EMOJI
 
     @staticmethod
-    def _assemble_source_bound_parts(emoji: str, blocks: List[str], formatted_date: Optional[str]) -> List[str]:
-        """Code owns the header and the #tarih tag; the model only writes body text."""
-        body = list(blocks)
+    def _assemble_source_bound_parts(
+        emoji: str, blocks: List[str], formatted_date: Optional[str], question: str,
+    ) -> List[str]:
+        """Code owns the header, the #tarih tag and the closing question; the model's question is discarded."""
+        body = list(blocks[:-1]) if len(blocks) > 1 else list(blocks)
         if not _TAG_TARIH.search(body[0]):
             body[0] = f"{body[0].rstrip()} #tarih"
         header = f"{emoji} Tarihte Bugün ({formatted_date})" if formatted_date else f"{emoji} Tarihte Bugün"
-        return [f"{header}\n\n{body[0]}", *body[1:]]
+        return [f"{header}\n\n{body[0]}", *body[1:], question]
 
     @staticmethod
     def _has_turkish_vocabulary(text: str) -> bool:
