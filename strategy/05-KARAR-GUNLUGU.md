@@ -123,6 +123,25 @@ main'deki `ai_service.py` + `content_guard.py` incelemesi ve DB (`post_history.g
 
 Seviye 1 koruması: çıktıdaki yıl/sayı/özel adlar kaynak metinde geçmeli; geçmiyorsa sonraki modele, olmazsa fallback'e. Zayıflık: 27/34 gönderi "thin_source" (kaynak yalnızca tek cümle). Asıl çözüm daha fazla serbestlik değil, **daha zengin kaynak metni**: bağlantılı Vikipedi sayfası özetini (ilk ~800 karakter) prompt'a vermek ve olay seçiminde özeti zayıf olayları geri plana atmak.
 
+## Canlı test #1 sonucu (7 Kas, `evidence/ilk-10-cikti.md`)
+
+- 10 olaydan 5'i modelle geçti, 5'i ham metne düştü. **8/10 olayda kaynak özeti "Sağlanmadı"** (Haiku'nun G3'teki seçici filtresi çoğu özeti eledi). Kaynak yokken modeller süs/uydurma ile dolduruyor.
+- Geçen metinlerde uydurma: "1920 kışının buzlu sabahı", "kapıları sessizce açıldı" (#6), "tesadüf değildi", "nadir isimlerden biri" (#10), "gün yüzüne çıkardı" (#9), "en tartışmalı seçimler" (#3). Sayı/ad/kalıp kontrolü bunları yakalamadı.
+- Model erişimi: `gemma-4-31b` ve `gemma-4-26b` 10/10 denemede 429; `nemotron-3-ultra` her seferinde 200; `openrouter/free` güvenilmez (şablon yer tutucusunu aynen basma, küme dışı emoji, bir kez HTTP 400 "reasoning mandatory").
+- **Karar:** Üretim açılmaz. Çözüm kara liste (sıfat/sahne listesi) değil: (1) kaynak katmanını düzelt, (2) kelime-kökü örtüşme koruması ekle, (3) olay seçiminde zengin kaynağı olanı tercih et, (4) kaskad sırası nemotron-ultra → gemma → `openrouter/free` son.
+
+## Canlı test #2 sonucu (7 Kas, commit d7d5d2e, push yok)
+
+- Kaynak katmanı düzeldi: canlı 10 olayın tamamı ≥200 karakter özet aldı. Ama yalnızca 1/10 model çıktısıyla geçti. `nemotron-3-ultra` kaynak dışı betimleme ekliyor ("sessizliği birden koptu", "537 oy", "1.000 kişilik ordu"), kök-örtüşme koruması bunları doğru reddediyor. Gemma modelleri 10/10 429. `openrouter/free` bazen 400 ("Reasoning is mandatory"): `reasoning: none` gönderimi bu uç nokta için sorunlu.
+- **Karar yönü:** Model değiştirmek yerine (a) prompt'a few-shot örnekler + "kaynak cümlelerini yeniden sırala" yapısı, (b) 429'da bekleyip yeniden deneme, (c) `reasoning` parametresini bu uç nokta için gönderme, (d) **fallback'i yapılandırılmış hale getirme**: model başarısız olunca ham cümle değil, kodla kurulan çerçeve (başlık + olay cümlesi + özetten en uygun cümle + soru bankasından kısa soru).
+- Gerekçe: ücretsiz modeller güvenilmez; en kötü durumda bile içerik soru ve yapı taşımalı. Yorum/etkileşim hipotezi (D-01) model başarısından bağımsız test edilebilir.
+
+## Canlı test #3 sonucu (7 Kas, commit 6d8e13f, push yok)
+
+- 0/10 model çıktısıyla geçti, 10/10 yapılandırılmış fallback. Gemma 36/36 deneme 429 (OpenRouter ortak havuzu; hata mesajı "kendi sağlayıcı anahtarını ekle" diyor). `nemotron-ultra` 8 kez 200 ama hepsi doğrulamada reddedildi. `openrouter/free` boş içerik döndürdü.
+- Yapılandırılmış fallback kaynağa birebir sadık (uydurma riski yok) ama kalite orta: 10/10 çıktıda aynı soru ("Bu olayı daha önce duymuş muydunuz?", kuru çalıştırmada geçmiş güncellenmediği için), biyografi/ölüm kayıtlarında soru tuhaf, olay cümlesi ile özet cümlesi bazen aynı şeyi tekrar ediyor ("Brad Harris, …, (d. 1933). Bradford Harris, …"), seçilen olayların birçoğu Türkiye dışı.
+- **Karar yönü:** (A) Yapılandırılmış fallback varsayılan olur ve iyileştirilir (tür-duyarlı soru, tekrar önleme). (B) Model sorunu için ücretsiz ve kullanıcıya özel çözüm: Google AI Studio ücretsiz API anahtarı (ayrı kota), `GEMINI_API_KEY` GitHub secret'ı; kaskadın ilk modeli. Anahtarı sohbete yapıştırma. (C) `openrouter/free` kaskaddan çıkar, 429 alan modeli aynı çalıştırmada tekrar deneme.
+
 ## Ertelenenler
 
 - **Token bitiş tarihi ve uyarı sistemi (7 Kas):** Kullanıcı "sonraya bırakalım" dedi. Not: bot her çalışmada token yeniler ama `expires_in` değerini kaydetmiyor; 14-17 Ekim kaybının kesin nedeni belirsiz. Haiku görevi: `expires_in` logla + süre dolmadan uyarı.

@@ -15,7 +15,7 @@ Durum: **TASLAK, onay bekliyor.** Kod yazılmadı. Bu belge onaylanınca Haiku'y
 
 | İzinli (yorum) | Yasak (ekleme) |
 |---|---|
-| Aynı bilgiyi daha çarpıcı sırayla yazmak ("Oy birliğiyle" → "tek bir ret oyu çıkmadı") | Kaynakta olmayan sayı, tarih, isim, yer, alıntı |
+| Aynı bilgiyi daha çarpıcı sırayla yazmak ("Oy birliğiyle" → "oylamada karşı oy çıkmadı") | Kaynakta olmayan sayı, tarih, isim, yer, alıntı |
 | Kaynaktaki karşıtlığı veya şaşırtıcı yanı öne çıkarmak | Neden, niyet, duygu, sonuç uydurmak ("korkmuştu", "bu yüzden") |
 | Retorik giriş ve açık uçlu soru | "İlk kez", "en büyük", "tek" gibi kaynakta yazmayan üstünlük iddiası |
 | Kaynaktaki bilgiyi güncel okuyucuya bağlamak, **iddia katmadan** ("Bugün aynı caddeden geçenler…" hayır; "O gün …" evet) | Günümüzle bağ kurarken yeni olgu söylemek |
@@ -119,12 +119,12 @@ Kaynak olay: "Türkiye Cumhuriyeti kuruldu ve TBMM'deki oylamada Mustafa Kemal A
 ```
 EMOJI: 🏛️
 ---
-TBMM'deki oylamada tek bir ret oyu çıkmadı: Mustafa Kemal Atatürk, oy birliğiyle Türkiye Cumhuriyeti'nin ilk cumhurbaşkanı seçildi. #tarih
+TBMM'deki oylamada karşı oy çıkmadı: Mustafa Kemal Atatürk, oy birliğiyle Türkiye Cumhuriyeti'nin ilk cumhurbaşkanı seçildi. #tarih
 ---
 Bu ayrıntıyı daha önce duymuş muydunuz?
 ```
-Neden iyi: "oy birliği" → "tek bir ret oyu çıkmadı" yorum, yeni olgu değil. Soru kısa, doğal, evet/hayır ile bile cevaplanabilir (yanıt eşiğini düşürür).
-Not: "tek bir ret oyu çıkmadı" ifadesinin "oy birliği"ne eşdeğerliği kabul edilebilir; "çekimser oy yoktu" gibi **ek** iddia olsaydı yasak olurdu.
+Neden iyi: "oy birliği" → "oylamada karşı oy çıkmadı" yorum, yeni olgu değil. Soru kısa, doğal, evet/hayır ile bile cevaplanabilir (yanıt eşiğini düşürür).
+Not: "oylamada karşı oy çıkmadı" ifadesinin "oy birliği"ne eşdeğerliği kabul edilebilir; "çekimser oy yoktu" gibi **ek** iddia olsaydı yasak olurdu.
 
 ## Otomatik doğrulama (Seviye 1 koruması, Haiku'ya brif)
 
