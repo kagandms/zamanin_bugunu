@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Google AI Studio (Gemini). Key is read from GEMINI_API_KEY; without it the provider is skipped.
     GEMINI_API_KEY: Optional[SecretStr] = None
     # Empty means Gemini is skipped. Set to a model id verified to return Turkish text.
-    GEMINI_MODEL: str = ""
+    GEMINI_MODEL: str = "gemini-3.5-flash"
     # Thinking control for Gemini 3.x models (thinkingLevel); Gemini 2.x uses thinkingBudget 0.
     GEMINI_THINKING_LEVEL: str = "minimal"
     
