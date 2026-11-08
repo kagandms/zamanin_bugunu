@@ -15,6 +15,7 @@ from src.data.source_evidence import build_source_evidence
 from src.services.ai_service import AIService
 from src.services.content_guard import (
     EventRewriteRequest, get_relevant_source_sentences, resolve_fact_profile, source_summary_sentences,
+    unattributed_loaded_terms,
 )
 from src.services.content_service import ContentService
 from src.services.source_context import select_event_source, select_event_summary
@@ -150,6 +151,9 @@ def _rewrite_rejection(candidate: dict[str, object], blocks: list[str], generati
     }
     if body.casefold() in title_values or len(body.split()) < 3:
         return "title_only"
+    if (generation_type or "").startswith("source_fallback:") and unattributed_loaded_terms(body):
+        # The fallback copies source sentences verbatim; a side-taking term without attribution skips the event.
+        return "loaded_term"
     if len("".join(blocks)) < MIN_GENERATED_CONTENT_CHARS:
         if (generation_type or "").startswith("source_fallback:"):
             return None

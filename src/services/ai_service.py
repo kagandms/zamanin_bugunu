@@ -142,6 +142,13 @@ KESİN KURALLAR
 7. Yalnızca kaynak cümlelerini yeniden sırala: öne çıkan olguyu başa al. Yeni sıfat, betimleme, sahne, duygu, neden
    veya sonuç ekleme. Kaynakta geçmeyen bir sözcük kullanma.
    Yasak örnek: "Bir cami, başka bir çağın izini de taşıyormuş." (çağ, iz, taşımak kaynakta yok.)
+8. Çatışma ve siyaset olaylarında taraf tutan fiil veya sıfat kullanma (işgal, kurtardı, zafer, şehit, kahraman, hain gibi).
+   Nötr fiil kullan: "denetimine geçti", "denetimi ele geçirdi", "girdi", "yenildi". Yüklü bir terim gerekiyorsa mutlaka
+   atıf yap: "X'e göre ...", "X tarafından ... olarak adlandırılan ..." veya tırnak içinde ver. Atıfsız yüklü terim yasaktır.
+   Yasak örnek: "Azerbaycan güçleri Şuşa'yı Ermeni işgalinden kurtardı." (taraf tutuyor.)
+9. Bölüm 1: olay cümlesini yalnızca yeniden sıralama; kaynaktaki en merak uyandırıcı, doğrulanabilir unsuru (bir ad, bir sayı,
+   bir sonuç) başa al. Bölüm 2 kaynak özetinin kopyası olamaz: kaynaktaki sözcükleri kullanarak, cümleyi kısaltıp farklı
+   bir sırayla yeniden kur. Kaynakta olmayan sözcük, yorum veya sonuç ekleme.
 
 NASIL İLGİ ÇEKİCİ YAPARSIN
 - Bölüm 1'in ilk cümlesi okuyucuyu durdurmalı: kaynaktaki en şaşırtıcı, en çarpıcı veya en insani olguyla aç.
@@ -174,6 +181,12 @@ SOURCE_BOUND_FEW_SHOT: tuple[tuple[str, str], ...] = (
         "Kaynak özeti: Sağlanmadı.\nKaynak zengin mi: hayır",
         "EMOJI: 🏛️\n---\nBizans dönemi'nden kalma mozaikler, İstanbul Zeyrek Camii'nde bulundu. #tarih\n---\n"
         "Bu olayı daha önce duymuş muydunuz?",
+    ),
+    (
+        "Kaynak olay: İkinci Dağlık Karabağ Savaşı'nda Azerbaycan güçleri Şuşa şehrini Ermeni işgalinden kurtardı. "
+        "Bu tarih daha sonra Zafer Bayramı ilan edildi.\nKaynak özeti: Sağlanmadı.\nKaynak zengin mi: hayır",
+        "EMOJI: ⚔️\n---\nAzerbaycan'da bu tarih Zafer Bayramı ilan edildi: İkinci Dağlık Karabağ Savaşı'nda Şuşa şehri "
+        "Azerbaycan güçlerinin denetimine geçti. #tarih\n---\nBu olayı bugün nasıl okuyorsunuz?",
     ),
     (
         "Kaynak olay: Türkiye Cumhuriyeti kuruldu ve TBMM'deki oylamada Mustafa Kemal Atatürk oy birliğiyle "
@@ -619,7 +632,8 @@ class AIService:
                         rejections.extend(reasons)
                         logger.warning(f"{label} Model ({model}) rejected: {','.join(reasons)}")
                         continue
-                    question = choose_fallback_question(self.recent_published_texts, request.original_text)
+                    context_part = " ".join(blocks[1:-1])
+                    question = choose_fallback_question(self.recent_published_texts, request.original_text, context_part)
                     parts = self._assemble_source_bound_parts(emoji, blocks, request.formatted_date, question)
                     if any(len(part) > block_limit for part in parts):
                         rejections.append("length")

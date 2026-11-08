@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Optional
 
 from src.services.source_context import (
@@ -225,14 +226,27 @@ _ALLOWED_EXACT_WORDS = {
     "bu", "bir", "ve", "ile", "icin", "olan", "olarak", "gibi", "daha", "once", "sonra", "ama", "ise",
     "veya", "hem", "ya", "da", "de", "ki", "kadar", "yani", "cok", "sadece", "mi", "mu", "misin", "misiniz",
     "yil", "yilinda", "gun", "ne", "her", "bunu", "bunun", "yok", "var",
+    # Conjunctions and auxiliary verbs that carry no fact of their own.
+    "ancak", "fakat", "lakin", "oysa", "hatta", "yine", "ayrica", "ayni", "diger", "baska", "oldu", "olmus",
+    "olur", "olmak", "idi", "imis", "sonra", "once", "iken", "uzerine", "ardindan",
 }
 _ALLOWED_WORD_PREFIXES = (
     "olay", "sizce", "bugun", "muydu", "duymus", "biliyor", "nasil", "okuy", "dusun", "hatirl", "tarih",
+    "bilin", "edil",
 )
 _MAX_UNSUPPORTED_ROOTS = 2
 _SOURCE_BOUND_NON_NAMES = {"bugun", "tarihte", "tarih"} | {
     "ocak", "subat", "mart", "nisan", "mayis", "haziran", "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik",
 }
+# Roots of words that take a side in conflicts and politics. They may appear in generated text only
+# with attribution ("... göre", "... tarafından ... olarak adlandırılan", or inside quotation marks).
+LOADED_TERM_ROOTS: tuple[str, ...] = (
+    "isgal", "kurtar", "zafer", "soykirim", "katliam", "vahset", "hain", "kahraman",
+    "sehit", "alcak", "zalim", "hakli", "haksiz", "teror",
+)
+_LOADED_EXEMPT_WORDS = {"kahramanmaras"}
+_QUOTED_SPAN = re.compile(r'["“„«][^"“”„«»]{2,}["”»]')
+_COPY_SHARE = 0.6  # a body block this much a consecutive run of one source sentence counts as a copy
 _NUMBER_PATTERN = re.compile(r"\d+(?:[.,]\d+)*")
 _WORD_PATTERN = re.compile(r"[^\W\d_]+")
 _SENTENCE_BREAK = re.compile(r"[.!?\n:;]+")
@@ -252,6 +266,51 @@ def _source_evidence_text(request: EventRewriteRequest) -> str:
 
 def _numbers_in(text: str) -> set[str]:
     return {re.sub(r"[.,]", "", match) for match in _NUMBER_PATTERN.findall(text)}
+
+
+def _is_attributed(sentence: str, term_positions: list[int]) -> bool:
+    normalized = normalize_fact_text(sentence)
+    if re.search(r"\bgore\b", normalized) or re.search(r"tarafindan\b.{0,80}adlandir", normalized):
+        return True
+    spans = [(match.start(), match.end()) for match in _QUOTED_SPAN.finditer(sentence)]
+    return all(any(start <= position <= end for start, end in spans) for position in term_positions)
+
+
+def unattributed_loaded_terms(text: str) -> tuple[str, ...]:
+    """Loaded-term roots used without attribution. Proper names (Zafer Bayramı, Kahramanmaraş) are exempt."""
+    found: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        tokens = list(_WORD_PATTERN.finditer(sentence))
+        hits: list[tuple[str, int]] = []
+        for index, match in enumerate(tokens):
+            token = match.group(0)
+            capitalized = token[0].isupper()
+            if (index > 0 and capitalized) or (index == 0 and capitalized and len(tokens) > 1 and tokens[1].group(0)[0].isupper()):
+                continue  # proper noun or proper-noun compound at the start of a sentence
+            normalized = normalize_fact_text(token)
+            if normalized in _LOADED_EXEMPT_WORDS:
+                continue
+            root = next((root for root in LOADED_TERM_ROOTS if normalized.startswith(root)), None)
+            if root:
+                hits.append((root, match.start()))
+        if hits and not _is_attributed(sentence, [position for _, position in hits]):
+            found.extend(root for root, _ in hits)
+    return tuple(dict.fromkeys(found))
+
+
+def _copies_source(body_blocks: list[str], request: EventRewriteRequest) -> bool:
+    """True when a block after the first repeats a long consecutive run of one source sentence."""
+    sources = [*complete_sentences(request.original_text), request.original_text, *source_summary_sentences(request)]
+    source_words = [_words(sentence) for sentence in sources if sentence.strip()]
+    for block in body_blocks:
+        words = _words(block)
+        if len(words) < 5:
+            continue
+        for other in source_words:
+            match = SequenceMatcher(None, words, other, autojunk=False).find_longest_match(0, len(words), 0, len(other))
+            if match.size / len(words) >= _COPY_SHARE:
+                return True
+    return False
 
 
 def _unsupported_numbers(text: str, evidence: str) -> bool:
@@ -327,11 +386,16 @@ def validate_source_bound_content(
     if any(len(block) > max_block_chars for block in blocks):
         reasons.append("length")
     evidence = _source_evidence_text(request)
-    text = "\n".join(blocks[:-1] if len(blocks) > 1 else blocks)  # the model question is replaced in code
+    body = blocks[:-1] if len(blocks) > 1 else blocks  # the model question is replaced in code
+    text = "\n".join(body)
     if _unsupported_numbers(text, evidence):
         reasons.append("unsupported_number")
     if _unsupported_names(text, evidence):
         reasons.append("unsupported_name")
     if len(_unsupported_roots(text, evidence)) > _MAX_UNSUPPORTED_ROOTS:
         reasons.append("unsupported_words")
+    if unattributed_loaded_terms(text):
+        reasons.append("loaded_term")
+    if _copies_source(body[1:], request):
+        reasons.append("copied_source")
     return tuple(reasons)

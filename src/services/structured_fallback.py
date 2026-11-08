@@ -7,22 +7,34 @@ from __future__ import annotations
 
 import re
 
-from src.services.content_guard import EventRewriteRequest, source_summary_sentences
+from src.services.content_guard import EventRewriteRequest, source_summary_sentences, unattributed_loaded_terms
 from src.services.source_context import _matches, _words, normalize_fact_text
 
-EVENT_QUESTIONS: tuple[str, ...] = (
-    "Bu ayrıntıyı daha önce duymuş muydunuz?",
+# General questions: safe for every event, including conflicts and politics.
+GENERAL_QUESTIONS: tuple[str, ...] = (
     "Bu olayı bugün nasıl okuyorsunuz?",
-    "Bu olayın izlerini bugün hâlâ görmek mümkün mü?",
+    "Bu olay hakkında ne biliyordunuz?",
+    "Bu olayı daha önce duymuş muydunuz?",
     "Bu konuda daha önce bir bilginiz var mıydı?",
+)
+# Only when the second part carries a concrete number or name that "this detail" can point to.
+DETAIL_QUESTION = "Bu ayrıntıyı daha önce duymuş muydunuz?"
+# Open questions that invite an opinion; not used for conflict and politics events.
+OPEN_QUESTIONS: tuple[str, ...] = (
+    "Bu olayın izlerini bugün hâlâ görmek mümkün mü?",
     "Sizce bu olay tarih kitaplarında nasıl anlatılıyor?",
 )
+EVENT_QUESTIONS: tuple[str, ...] = GENERAL_QUESTIONS + (DETAIL_QUESTION,) + OPEN_QUESTIONS
 PERSON_QUESTIONS: tuple[str, ...] = (
     "Bu ismi tanıyor muydunuz?",
     "Bu kişiyi daha önce duymuş muydunuz?",
     "Bu isim hakkında ne biliyorsunuz?",
 )
 FALLBACK_QUESTIONS: tuple[str, ...] = EVENT_QUESTIONS + PERSON_QUESTIONS
+CONFLICT_ROOTS: tuple[str, ...] = (
+    "savas", "muhareb", "catis", "saldir", "isgal", "darbe", "isyan", "katliam", "soykirim", "teror",
+    "secim", "hukumet", "iktidar", "anayasa", "referandum", "devrim", "ihtilal", "cumhurbaskan", "basbakan", "parti",
+)
 _MIN_NEW_WORDS = 2  # a summary sentence must add at least this many meaningful words the event lacks
 _REPEAT_SHARE = 0.5  # share of meaningful words already in the event at which a sentence counts as a repeat
 _STOP = {"bir", "ile", "olan", "olarak", "hakkinda", "bilgi", "ve", "bu", "icin", "daha", "kadar", "gibi"}
@@ -36,9 +48,42 @@ def event_kind(event_text: str) -> str:
     return "person" if _PERSON_EVENT.search(event_text or "") else "event"
 
 
-def choose_fallback_question(recent_texts: list[str] | tuple[str, ...], event_text: str = "") -> str:
-    """The least-used question of the event's kind in recent published texts; bank order on ties."""
-    bank = PERSON_QUESTIONS if event_kind(event_text) == "person" else EVENT_QUESTIONS
+def is_conflict_or_politics(event_text: str) -> bool:
+    words = _words(event_text)
+    return any(word.startswith(root) for word in words for root in CONFLICT_ROOTS)
+
+
+def has_concrete_detail(context_text: str, event_text: str = "") -> bool:
+    """A number that is not a year, or a proper name the event sentence does not already carry."""
+    if not context_text.strip():
+        return False
+    if any(len(number) < 4 for number in re.findall(r"\d+", context_text)):
+        return True
+    event_norm = normalize_fact_text(event_text)
+    for sentence in re.split(r"[.!?\n]+", context_text):
+        for token in re.findall(r"[^\W\d_]+", sentence)[1:]:
+            if token[0].isupper() and normalize_fact_text(token)[:5] not in event_norm:
+                return True
+    return False
+
+
+def question_bank(event_text: str, context_text: str = "") -> tuple[str, ...]:
+    """Questions allowed for this event: kind, topic sensitivity and whether a concrete detail exists."""
+    if event_kind(event_text) == "person":
+        return PERSON_QUESTIONS
+    bank = list(GENERAL_QUESTIONS)
+    if has_concrete_detail(context_text, event_text):
+        bank.append(DETAIL_QUESTION)
+    if not is_conflict_or_politics(event_text):
+        bank.extend(OPEN_QUESTIONS)
+    return tuple(bank)
+
+
+def choose_fallback_question(
+    recent_texts: list[str] | tuple[str, ...], event_text: str = "", context_text: str = "",
+) -> str:
+    """The least-used allowed question in recent published texts; bank order on ties."""
+    bank = question_bank(event_text, context_text)
     recent = normalize_fact_text("\n".join(recent_texts))
     counts = [recent.count(normalize_fact_text(question.rstrip("?"))) for question in bank]
     return bank[counts.index(min(counts))]
@@ -51,6 +96,8 @@ def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | 
     best: tuple[int, str] | None = None
     for sentence in sentences:
         if normalize_fact_text(sentence).strip(" .") == event_norm:
+            continue
+        if unattributed_loaded_terms(sentence):
             continue
         sentence_words = [word for word in _words(sentence) if len(word) >= 4 and word not in _STOP]
         matched = [word for word in sentence_words if _matches(word, event_words)]
@@ -86,4 +133,4 @@ def build_structured_parts(
         first = f"{header}\n\n{event} #tarih"
     if len(first) > block_limit:
         first = first[:block_limit - 3].rstrip() + "..."
-    return [first, choose_fallback_question(recent_texts, request.original_text)], best
+    return [first, choose_fallback_question(recent_texts, request.original_text, best or "")], best

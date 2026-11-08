@@ -195,7 +195,7 @@ async def test_unapproved_emoji_becomes_default(monkeypatch: pytest.MonkeyPatch)
 async def test_thin_source_accepts_two_blocks_and_rich_source_accepts_three(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    middle = "Antlaşma metninde güney sınırının taslak olarak belirlenmesi kararı yer alır."
+    middle = "Güney sınırı için taslak bir karar yer alır."
     payloads = _use_fake_models(monkeypatch, [
         _body(GOOD_BLOCK_ONE, GOOD_QUESTION),
         _body(GOOD_BLOCK_ONE, middle, GOOD_QUESTION),
@@ -327,7 +327,10 @@ async def test_few_shot_pairs_precede_the_real_request(monkeypatch: pytest.Monke
     await AIService().rewrite_event_safe(_request())
 
     roles = [message["role"] for message in payloads[0]["messages"]]
-    assert roles == ["system", "user", "assistant", "user", "assistant", "user"]
+    from src.services.ai_service import SOURCE_BOUND_FEW_SHOT
+
+    assert roles == ["system", *["user", "assistant"] * len(SOURCE_BOUND_FEW_SHOT), "user"]
+    assert len(SOURCE_BOUND_FEW_SHOT) >= 3
 
 
 @pytest.mark.asyncio
