@@ -123,6 +123,7 @@ RATE_LIMIT_BACKOFF_SECONDS = 5
 SOURCE_BOUND_TIME_BUDGET_SECONDS = 90
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_TIMEOUT_SECONDS = 25.0
+OVERLOAD_RETRIES = 1  # one backoff-and-retry on HTTP 503 before the cascade moves on
 
 SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
 
@@ -208,6 +209,7 @@ class AIService:
         self.last_source_id: Optional[str] = None
         self.last_source_url: Optional[str] = None
         self.last_used_source_sentence: Optional[str] = None
+        self.last_error_message: str = ""
         self.recent_published_texts: list[str] = []
         self.prompt_version = PROMPT_VERSION_PROFILED
         self.url = "https://openrouter.ai/api/v1/chat/completions"
@@ -494,6 +496,14 @@ class AIService:
             cascade.append(("openrouter", settings.BACKUP_MODEL, "Secondary"))
         return cascade
 
+    def _safe_error_message(self, response) -> str:
+        """Short provider error text for logs; never contains an API key."""
+        text = str(getattr(response, "text", "") or "").replace("\n", " ")[:160]
+        for secret in (self._gemini_api_key(), self.api_key):
+            if secret:
+                text = text.replace(secret, "***")
+        return text
+
     @staticmethod
     def _models_without_reasoning() -> set[str]:
         return {m.strip() for m in settings.MODELS_WITHOUT_REASONING_PARAM.split(",") if m.strip()}
@@ -544,7 +554,8 @@ class AIService:
         self, client, provider: str, model: str, messages: list[dict[str, str]],
         base: dict[str, object], deadline: float, label: str,
     ) -> tuple[int, Optional[str], Optional[str]]:
-        """One model, retried on HTTP 429 after a short backoff until this model's time share ends."""
+        """One model, retried after a short backoff on HTTP 429 (rate limit) and once on 503 (overload)."""
+        overload_retries = 0
         while True:
             if provider == "gemini":
                 url, headers, body = self._gemini_request(model, messages)
@@ -554,13 +565,18 @@ class AIService:
                 response = await client.post(url, headers=headers, json=body, timeout=GEMINI_TIMEOUT_SECONDS)
             else:
                 response = await client.post(url, headers=headers, json=body)
-            if response.status_code != 429:
+            status = response.status_code
+            retry_overload = status == 503 and overload_retries < OVERLOAD_RETRIES
+            if status != 429 and not retry_overload:
                 break
             if time.monotonic() + RATE_LIMIT_BACKOFF_SECONDS > deadline:
                 break
-            logger.warning(f"{label} Model ({model}) rate-limited; retrying after {RATE_LIMIT_BACKOFF_SECONDS}s")
+            overload_retries += 1 if retry_overload else 0
+            reason = "overloaded (503)" if retry_overload else "rate-limited"
+            logger.warning(f"{label} Model ({model}) {reason}; retrying after {RATE_LIMIT_BACKOFF_SECONDS}s")
             await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
         if response.status_code != 200:
+            self.last_error_message = self._safe_error_message(response)
             return response.status_code, None, None
         result = response.json()
         if provider == "gemini":
@@ -610,7 +626,7 @@ class AIService:
                         client, provider, model, messages, base, deadline, label,
                     )
                     if status != 200:
-                        logger.warning(f"{label} Model ({model}) returned HTTP {status}")
+                        logger.warning(f"{label} Model ({model}) returned HTTP {status}: {self.last_error_message}")
                         rejections.append("rate_limited" if status == 429 else "http_error")
                         continue
                     if not raw_text:

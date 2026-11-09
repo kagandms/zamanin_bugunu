@@ -466,3 +466,37 @@ def test_gemini_request_uses_timeout_and_minimal_thinking(monkeypatch: pytest.Mo
     ))
     assert (status, text) == (200, "Merhaba.")
     assert seen[0]["timeout"] == module.GEMINI_TIMEOUT_SECONDS == 25.0
+
+
+@pytest.mark.asyncio
+async def test_gemini_503_is_retried_once_before_the_cascade_moves_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_BACKOFF_SECONDS", 0)
+    payloads = _use_scripted_responses(
+        monkeypatch,
+        [(503, "high demand"), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
+        extra={"GEMINI_API_KEY": "test-gemini-key", "GEMINI_MODEL": "gemini-test-model"},
+    )
+    service = AIService()
+
+    await service.rewrite_event_safe(_request())
+
+    assert len(payloads) == 2
+    assert "systemInstruction" in payloads[1]  # the retry went to Gemini again, not to OpenRouter
+    assert service.last_generation_model == "scripted-gemini"
+
+
+@pytest.mark.asyncio
+async def test_two_gemini_503s_fall_through_to_the_next_provider_and_log_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_BACKOFF_SECONDS", 0)
+    key = "test-gemini-key"
+    payloads = _use_scripted_responses(
+        monkeypatch,
+        [(503, f"overloaded {key}"), (503, f"overloaded {key}"), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION))],
+        extra={"GEMINI_API_KEY": key, "GEMINI_MODEL": "gemini-test-model"},
+    )
+    service = AIService()
+
+    await service.rewrite_event_safe(_request())
+
+    assert [("systemInstruction" in p) for p in payloads] == [True, True, False]
+    assert key not in service.last_error_message
