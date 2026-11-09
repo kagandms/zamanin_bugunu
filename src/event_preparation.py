@@ -102,6 +102,7 @@ async def _select_event(services: PreparationServices, history: HistoryRepositor
     candidates = await services.content.fetch_events(observed.month, observed.day)
     used_texts = list(await history.get_todays_posts())
     services.ai.recent_published_texts = list(await history.get_recent_published_texts())
+    services.content.recent_topics = list(await history.get_recent_topic_titles(days=7))
     for attempt in range(5):
         candidate = await services.content.select_best_event(candidates, used_texts)
         if not candidate:

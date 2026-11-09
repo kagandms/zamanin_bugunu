@@ -163,6 +163,10 @@ async def test_generic_follow_call_is_not_a_second_threads_part() -> None:
             return []
 
         @staticmethod
+        async def get_recent_topic_titles(days: int = 7) -> list[tuple[str, int | None]]:
+            return []
+
+        @staticmethod
         async def get_todays_posts() -> list[str]:
             return []
 

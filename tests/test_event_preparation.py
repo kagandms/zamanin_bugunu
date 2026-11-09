@@ -35,6 +35,9 @@ class HistoryStub:
     async def get_recent_published_texts(self) -> list[str]:
         return []
 
+    async def get_recent_topic_titles(self, days: int = 7) -> list[tuple[str, int | None]]:
+        return []
+
     async def get_todays_posts(self) -> list[str]:
         return list(self.used)
 

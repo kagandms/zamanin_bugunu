@@ -204,7 +204,7 @@ def _history() -> Any:
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
-    return SimpleNamespace(get_todays_posts=AsyncMock(return_value=[]), get_recent_published_texts=AsyncMock(return_value=[]), exists=AsyncMock(return_value=False))
+    return SimpleNamespace(get_todays_posts=AsyncMock(return_value=[]), get_recent_published_texts=AsyncMock(return_value=[]), get_recent_topic_titles=AsyncMock(return_value=[]), exists=AsyncMock(return_value=False))
 
 
 def _ai(generation_type: str) -> Any:

@@ -1,5 +1,6 @@
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,13 @@ from src.data.models import (
 from src.data.source_evidence import to_evidence_record
 
 ISTANBUL = ZoneInfo("Europe/Istanbul")
+
+
+def topic_title(source_id: Optional[str], source_url: Optional[str]) -> str:
+    """The Wikipedia page title behind a post: the URL slug if present, otherwise the stored source id."""
+    if source_url and "/wiki/" in source_url:
+        return unquote(source_url.rsplit("/wiki/", 1)[1]).replace("_", " ").strip()
+    return (source_id or "").replace("_", " ").strip()
 
 
 def as_utc(value: datetime) -> datetime:
@@ -257,6 +265,20 @@ class HistoryRepository:
             .limit(limit)
         )
         return [text for text in result.scalars().all() if text]
+
+    async def get_recent_topic_titles(self, days: int = 7) -> list[tuple[str, Optional[int]]]:
+        """Source page titles and years of posts from the last `days` days, for the topic cooldown."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
+        result = await self.session.execute(
+            select(PostHistory.source_id, PostHistory.source_url, PostHistory.event_year)
+            .where(PostHistory.posted_at >= cutoff)
+        )
+        topics: list[tuple[str, Optional[int]]] = []
+        for source_id, source_url, event_year in result.all():
+            title = topic_title(source_id, source_url)
+            if title:
+                topics.append((title, int(event_year) if str(event_year or "").isdigit() else None))
+        return topics
 
     async def get_todays_posts(self) -> list[str]:
         """Return today's reserved source texts for same-day candidate deduplication."""

@@ -34,7 +34,7 @@ class CategoryFetchResult:
     retry_after_seconds: float | None = None
     fetched_at: datetime | None = None
 from src.services.content_guard import SOURCE_RICH_MIN_CHARS
-from src.services.source_context import select_event_source, select_event_summary
+from src.services.source_context import normalize_fact_text, select_event_source, select_event_summary
 
 TOPIC_KEYWORDS = {
     "SIYASET": [
@@ -64,7 +64,12 @@ TOPIC_KEYWORDS = {
 
 
 class ContentService:
+    # Same-topic events published in the last 7 days lose this many points (never excluded outright).
+    TOPIC_COOLDOWN_PENALTY = 80
+
     def __init__(self):
+        # (source page title, year) of recent posts; filled by event preparation from the post history.
+        self.recent_topics: list[tuple[str, Optional[int]]] = []
         self.base_url = "https://tr.wikipedia.org/api/rest_v1/feed/onthisday"
         self.pageviews_url = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article"
         self.turkish_keywords = [
@@ -200,12 +205,46 @@ class ContentService:
             except (ValueError, TypeError):
                 pass
 
+        # 1.6 Topic cooldown: a topic already published in the last week is cooled down, not excluded.
+        if self._is_cooling_topic(item):
+            score -= self.TOPIC_COOLDOWN_PENALTY
+
         # 1.7 Thin source summaries give the model little to interpret; mild penalty, no exclusion.
         source = select_event_summary(item)
         if len(source.context if source else "") < 100:
             score -= 10
 
         return score
+
+    @staticmethod
+    def topic_words(title: str) -> tuple[str, ...]:
+        """The first two meaningful words (4+ letters) of a page title, accent-insensitive."""
+        words = re.findall(r"[a-z]+", normalize_fact_text(title.replace("_", " ")))
+        return tuple([word for word in words if len(word) >= 4][:2])
+
+    def _is_cooling_topic(self, item: dict) -> bool:
+        """Same topic = same first two meaningful title words and a year within one year of a recent post."""
+        if not self.recent_topics:
+            return False
+        pages = item.get("pages") or []
+        titles = [str((pages[0].get("titles") or {}).get("canonical") or pages[0].get("title") or "")] if pages else []
+        summary = select_event_summary(item)
+        if summary:
+            titles.append(summary.title)
+        try:
+            year = int(item.get("year")) if item.get("year") is not None else None
+        except (TypeError, ValueError):
+            year = None
+        for title in titles:
+            words = self.topic_words(title)
+            if not words:
+                continue
+            for recent_title, recent_year in self.recent_topics:
+                if words == self.topic_words(recent_title) and (
+                    year is None or recent_year is None or abs(year - recent_year) <= 1
+                ):
+                    return True
+        return False
 
     @staticmethod
     def _summary_length(item: dict) -> int:
