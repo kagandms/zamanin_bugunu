@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from src.core.config import settings
 from src.core.logger import logger
@@ -181,7 +181,34 @@ def _used_source_sentences(request: EventRewriteRequest, generation_type: str) -
     return tuple(selected)
 
 
-def _choose_image(rewrite: EventRewrite) -> tuple[str, str]:
+# Conflict and politics events never use a flag, emblem, leader portrait or poster as the picture:
+# a single side's symbol would take that side in a post that tells both sides' story.
+CONFLICT_TOPICS = ("SAVAS_ASKERI", "SIYASET")
+BLOCKED_IMAGE_KEYS = ("flag_of", "coat_of_arms", "emblem", "portrait", "poster", "propaganda")
+_IMAGE_FIELDS = (("thumbnail", "wikipedia_thumbnail"), ("originalimage", "wikipedia_original"))
+
+
+def is_blocked_image(url: str) -> bool:
+    lowered = unquote(url).lower()
+    return any(key in lowered for key in BLOCKED_IMAGE_KEYS)
+
+
+def _neutral_image(candidate: dict[str, object]) -> tuple[str, str] | None:
+    """Maps first, then other photographs from any linked page; None when every image is a side's symbol."""
+    options = [
+        (page[field]["source"], source)
+        for page in candidate.get("pages") or [] for field, source in _IMAGE_FIELDS
+        if page.get(field) and page[field].get("source") and not is_blocked_image(page[field]["source"])
+    ]
+    options.sort(key=lambda option: "map" not in unquote(option[0]).lower())
+    return options[0] if options else None
+
+
+def _choose_image(rewrite: EventRewrite) -> tuple[str | None, str]:
+    topic = rewrite.candidate.get("_topic_category") or ContentService.classify_topic(str(rewrite.candidate["text"]))
+    if topic in CONFLICT_TOPICS:
+        neutral = _neutral_image(rewrite.candidate)
+        return neutral if neutral else (None, "no_neutral_image")
     page = _first_page(rewrite.candidate)
     for field, source in (("thumbnail", "wikipedia_thumbnail"), ("originalimage", "wikipedia_original")):
         if page.get(field):
@@ -224,7 +251,7 @@ async def prepare_event(services: PreparationServices, history: HistoryRepositor
     """Prepare existing guarded content/media without making social publication calls."""
     rewrite = await _select_event(services, history, observed)
     url, image_source = _choose_image(rewrite)
-    image = PreparedImage(url, await services.image.download_image(url), image_source)
+    image = PreparedImage(url, await services.image.download_image(url) if url else None, image_source)
     blocks = tuple(block if len(block) <= settings.MAX_THREAD_LENGTH else
         block[:settings.MAX_THREAD_LENGTH - 3] + "..." for block in rewrite.blocks)[:3]
     threads = blocks
