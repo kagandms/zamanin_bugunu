@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from src.services.content_guard import EventRewriteRequest, source_summary_sentences, unattributed_loaded_terms
+from src.services.content_guard import EventRewriteRequest, ends_with_ordinal_stub, source_summary_sentences, unattributed_loaded_terms
 from src.services.source_context import _matches, _words, normalize_fact_text
 
 # General questions: safe for every event, including conflicts and politics.
@@ -25,11 +25,13 @@ OPEN_QUESTIONS: tuple[str, ...] = (
     "Sizce bu olay tarih kitaplarında nasıl anlatılıyor?",
 )
 EVENT_QUESTIONS: tuple[str, ...] = GENERAL_QUESTIONS + (DETAIL_QUESTION,) + OPEN_QUESTIONS
-PERSON_QUESTIONS: tuple[str, ...] = (
-    "Bu ismi tanıyor muydunuz?",
-    "Bu kişiyi daha önce duymuş muydunuz?",
-    "Bu isim hakkında ne biliyorsunuz?",
+# "Do you know this name?" is only for little-known people; leaders and famous figures get the neutral one.
+KNOWN_PERSON_QUESTIONS: tuple[str, ...] = ("Bu kişi hakkında ne biliyordunuz?",)
+PERSON_QUESTIONS: tuple[str, ...] = KNOWN_PERSON_QUESTIONS + ("Bu ismi tanıyor muydunuz?",)
+LEADER_ROOTS: tuple[str, ...] = (
+    "cumhurbaskan", "basbakan", "padisah", "halife", "kral", "imparator", "maresal", "baskomutan", "kurucu",
 )
+_MEMORIAL = re.compile(r"\böldü\b|vefat|hayatını kaybet|ulusal yas|\banma\b|ölümü|ölüm yıl", re.IGNORECASE)
 FALLBACK_QUESTIONS: tuple[str, ...] = EVENT_QUESTIONS + PERSON_QUESTIONS
 CONFLICT_ROOTS: tuple[str, ...] = (
     "savas", "muhareb", "catis", "saldir", "isgal", "darbe", "isyan", "katliam", "soykirim", "teror",
@@ -53,6 +55,17 @@ def is_conflict_or_politics(event_text: str) -> bool:
     return any(word.startswith(root) for word in words for root in CONFLICT_ROOTS)
 
 
+def mentions_leader(*texts: str) -> bool:
+    words = _words(" ".join(texts))
+    return any(word.startswith(root) for word in words for root in LEADER_ROOTS)
+
+
+def is_memorial_of_leader(event_text: str, context_text: str = "") -> bool:
+    """A death/mourning record of a leader or political figure: no closing question, it would be off-tone."""
+    joined = f"{event_text} {context_text}"
+    return bool(_MEMORIAL.search(joined)) and (mentions_leader(joined) or is_conflict_or_politics(joined))
+
+
 def has_concrete_detail(context_text: str, event_text: str = "") -> bool:
     """A number that is not a year, or a proper name the event sentence does not already carry."""
     if not context_text.strip():
@@ -70,7 +83,7 @@ def has_concrete_detail(context_text: str, event_text: str = "") -> bool:
 def question_bank(event_text: str, context_text: str = "") -> tuple[str, ...]:
     """Questions allowed for this event: kind, topic sensitivity and whether a concrete detail exists."""
     if event_kind(event_text) == "person":
-        return PERSON_QUESTIONS
+        return KNOWN_PERSON_QUESTIONS if mentions_leader(event_text, context_text) else PERSON_QUESTIONS
     bank = list(GENERAL_QUESTIONS)
     if has_concrete_detail(context_text, event_text):
         bank.append(DETAIL_QUESTION)
@@ -82,11 +95,24 @@ def question_bank(event_text: str, context_text: str = "") -> tuple[str, ...]:
 def choose_fallback_question(
     recent_texts: list[str] | tuple[str, ...], event_text: str = "", context_text: str = "",
 ) -> str:
-    """The least-used allowed question in recent published texts; bank order on ties."""
+    """The least-used allowed question in recent published texts; bank order on ties; '' when none fits."""
+    if is_memorial_of_leader(event_text, context_text):
+        return ""
     bank = question_bank(event_text, context_text)
     recent = normalize_fact_text("\n".join(recent_texts))
     counts = [recent.count(normalize_fact_text(question.rstrip("?"))) for question in bank]
     return bank[counts.index(min(counts))]
+
+
+_DEFINITION_END = re.compile(r"(?:d[ıiuü]r|t[ıiuü]r)\.?$|olarak da bilinir")
+
+
+def is_definition_sentence(sentence: str, event_words: list[str]) -> bool:
+    """'X, ... -dır': the encyclopedia definition of a person the event sentence already names."""
+    head = re.match(r"([A-ZÇĞİÖŞÜ][^,]{2,70}),\s", sentence)
+    if not head or not _DEFINITION_END.search(sentence.strip()):
+        return False
+    return any(_matches(word, event_words) for word in _words(head.group(1)) if len(word) >= 4)
 
 
 def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | None:
@@ -97,7 +123,7 @@ def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | 
     for sentence in sentences:
         if normalize_fact_text(sentence).strip(" .") == event_norm:
             continue
-        if unattributed_loaded_terms(sentence):
+        if unattributed_loaded_terms(sentence) or is_definition_sentence(sentence, event_words):
             continue
         sentence_words = [word for word in _words(sentence) if len(word) >= 4 and word not in _STOP]
         matched = [word for word in sentence_words if _matches(word, event_words)]
@@ -125,6 +151,8 @@ def build_structured_parts(
     if event and event[-1] not in ".!?":
         event += "."
     best = best_overlap_sentence(request.original_text, source_summary_sentences(request))
+    if best and ends_with_ordinal_stub(best):
+        best = None
     header = f"{header_emoji} Tarihte Bugün ({request.formatted_date})"
     body = f"{event} {best} #tarih" if best else f"{event} #tarih"
     first = f"{header}\n\n{body}"
@@ -133,4 +161,5 @@ def build_structured_parts(
         first = f"{header}\n\n{event} #tarih"
     if len(first) > block_limit:
         first = first[:block_limit - 3].rstrip() + "..."
-    return [first, choose_fallback_question(recent_texts, request.original_text, best or "")], best
+    question = choose_fallback_question(recent_texts, request.original_text, best or "")
+    return ([first, question] if question else [first]), best

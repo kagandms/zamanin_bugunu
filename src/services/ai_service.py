@@ -720,7 +720,7 @@ class AIService:
         if not _TAG_TARIH.search(body[0]):
             body[0] = f"{body[0].rstrip()} #tarih"
         header = f"{emoji} Tarihte Bugün ({formatted_date})" if formatted_date else f"{emoji} Tarihte Bugün"
-        return [f"{header}\n\n{body[0]}", *body[1:], question]
+        return [f"{header}\n\n{body[0]}", *body[1:], *([question] if question else [])]
 
     @staticmethod
     def _has_turkish_vocabulary(text: str) -> bool:
