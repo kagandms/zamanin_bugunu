@@ -123,7 +123,9 @@ _TAG_TARIH = re.compile(r"#tarih\b", re.IGNORECASE)
 RATE_LIMIT_BACKOFF_SECONDS = 5
 SOURCE_BOUND_TIME_BUDGET_SECONDS = 90
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_TIMEOUT_SECONDS = 25.0
+GEMINI_TIMEOUT_SECONDS = 40.0
+GEMINI_BUDGET_WEIGHT = 2.0  # Gemini gets twice an OpenRouter model's share of the time budget
+FREE_RATE_LIMIT_RETRIES = 2  # 429 retries per OpenRouter free model; Gemini keeps retrying within its share
 OVERLOAD_RETRIES = 1  # one backoff-and-retry on HTTP 503 before the cascade moves on
 
 SOURCE_BOUND_SYSTEM_PROMPT = """Sen Türkçe tarih içeriği yazan bir editörsün. Okuyucu: Türkiye'de tarihe meraklı, 25-55 yaş arası yetişkinler.
@@ -198,6 +200,13 @@ SOURCE_BOUND_FEW_SHOT: tuple[tuple[str, str], ...] = (
     ),
 )
 
+
+
+def provider_budget_seconds(provider: str, cascade: List[Tuple[str, str, str]]) -> float:
+    """A provider's share of the event's model time budget; Gemini weighs more. Shares sum to the budget."""
+    weights = [GEMINI_BUDGET_WEIGHT if name == "gemini" else 1.0 for name, _, _ in cascade]
+    own = GEMINI_BUDGET_WEIGHT if provider == "gemini" else 1.0
+    return SOURCE_BOUND_TIME_BUDGET_SECONDS * own / sum(weights)
 
 class AIService:
     def __init__(self) -> None:
@@ -557,6 +566,7 @@ class AIService:
     ) -> tuple[int, Optional[str], Optional[str]]:
         """One model, retried after a short backoff on HTTP 429 (rate limit) and once on 503 (overload)."""
         overload_retries = 0
+        rate_retries = 0
         while True:
             if provider == "gemini":
                 url, headers, body = self._gemini_request(model, messages)
@@ -568,11 +578,15 @@ class AIService:
                 response = await client.post(url, headers=headers, json=body)
             status = response.status_code
             retry_overload = status == 503 and overload_retries < OVERLOAD_RETRIES
-            if status != 429 and not retry_overload:
+            retry_rate = status == 429 and (provider == "gemini" or rate_retries < FREE_RATE_LIMIT_RETRIES)
+            if not (retry_overload or retry_rate):
                 break
             if time.monotonic() + RATE_LIMIT_BACKOFF_SECONDS > deadline:
                 break
-            overload_retries += 1 if retry_overload else 0
+            if retry_overload:
+                overload_retries += 1
+            else:
+                rate_retries += 1
             reason = "overloaded (503)" if retry_overload else "rate-limited"
             logger.warning(f"{label} Model ({model}) {reason}; retrying after {RATE_LIMIT_BACKOFF_SECONDS}s")
             await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
@@ -620,8 +634,7 @@ class AIService:
                     rejections.append("time_budget")
                     break
                 try:
-                    # Each provider gets an equal share of the event's model time budget.
-                    share = SOURCE_BOUND_TIME_BUDGET_SECONDS / len(cascade)
+                    share = provider_budget_seconds(provider, cascade)
                     deadline = min(time.monotonic() + share, started + SOURCE_BOUND_TIME_BUDGET_SECONDS)
                     status, raw_text, responded_model = await self._call_with_backoff(
                         client, provider, model, messages, base, deadline, label,

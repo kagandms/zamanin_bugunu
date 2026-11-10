@@ -271,7 +271,7 @@ def test_source_bound_evidence_uses_the_summary_sentences_actually_given_to_the_
 
 
 @pytest.mark.asyncio
-async def test_rate_limited_model_is_retried_in_the_same_run(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_rate_limited_free_model_gets_two_retries_then_the_cascade_moves_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.services.ai_service.RATE_LIMIT_BACKOFF_SECONDS", 0)
     payloads = _use_scripted_responses(monkeypatch, [
         (429, ""), (429, ""), (429, ""), (200, _body(GOOD_BLOCK_ONE, GOOD_QUESTION)),
@@ -280,8 +280,30 @@ async def test_rate_limited_model_is_retried_in_the_same_run(monkeypatch: pytest
 
     await service.rewrite_event_safe(_request())
 
-    assert [p["model"] for p in payloads] == ["model-1"] * 4
+    # one attempt + FREE_RATE_LIMIT_RETRIES (2) retries on the first free model, then the second model answers
+    assert [p["model"] for p in payloads] == ["model-1"] * 3 + ["model-2"]
     assert service.last_generation_type == "ai_source_bound"
+
+
+def test_free_model_429_retry_cap_is_two() -> None:
+    from src.services import ai_service as module
+
+    assert module.FREE_RATE_LIMIT_RETRIES == 2
+
+
+def test_gemini_gets_a_larger_budget_share_and_shares_sum_to_the_budget() -> None:
+    from src.services import ai_service as module
+
+    three = [("gemini", "g", "Gemini"), ("openrouter", "a", "Primary"), ("openrouter", "b", "Secondary")]
+    two = three[1:]
+    budget = module.SOURCE_BOUND_TIME_BUDGET_SECONDS
+    gemini = module.provider_budget_seconds("gemini", three)
+    free = module.provider_budget_seconds("openrouter", three)
+    assert gemini == pytest.approx(45.0) and free == pytest.approx(22.5)
+    assert gemini > free
+    assert gemini + 2 * free == pytest.approx(budget)
+    assert gemini >= module.GEMINI_TIMEOUT_SECONDS  # one Gemini request can finish inside its share
+    assert module.provider_budget_seconds("openrouter", two) == pytest.approx(budget / 2)
 
 
 def test_model_time_budget_is_about_ninety_seconds() -> None:
@@ -465,7 +487,7 @@ def test_gemini_request_uses_timeout_and_minimal_thinking(monkeypatch: pytest.Mo
         {}, time.monotonic() + 60, "Gemini",
     ))
     assert (status, text) == (200, "Merhaba.")
-    assert seen[0]["timeout"] == module.GEMINI_TIMEOUT_SECONDS == 25.0
+    assert seen[0]["timeout"] == module.GEMINI_TIMEOUT_SECONDS == 40.0
 
 
 @pytest.mark.asyncio

@@ -62,3 +62,7 @@ Soru yok, tanım cümlesi yok, tek parça.
 - 503'ün Google tarafında ne kadar sürdüğü; 5 sn yetersiz kalıyor, ama daha uzun bekleme bütçeyi yer.
 - Anma kuralı `anma` kelimesine bağlı; "doğum yıl dönümü" gibi anmalarda soru kalır.
 - `leader` sözcüğü (`kral`, `kurucu`) bir şirket kurucusu gibi lider olmayan kişilerde de soruyu kısıtlar; zararsız (daha az soru).
+
+## Ek değişiklik (tek commit, toplam bütçe 90 sn aynı)
+- `GEMINI_TIMEOUT_SECONDS` 25 → 40. Gemini'ye bütçe payı: 2 birim (45 sn), her OpenRouter modeli 1 birim (22,5 sn); paylar toplamı 90 sn (`provider_budget_seconds`). Gemini zaman aşımı payın içine sığıyor.
+- OpenRouter ücretsiz modellerde 429 tekrarı 5'ten 2'ye indi (`FREE_RATE_LIMIT_RETRIES`); Gemini'de 429 tekrarı payla sınırlı kalmaya devam ediyor.
