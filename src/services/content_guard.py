@@ -368,6 +368,16 @@ def _format_problem(blocks: list[str], emoji_line_present: bool, summary_present
     return not normalize_fact_text(blocks[-1].rstrip()).endswith("?")
 
 
+def rejection_detail(blocks: list[str], request: EventRewriteRequest) -> str:
+    """Words and numbers the guard could not find in the source; for logs only (model output, no secrets)."""
+    evidence = _source_evidence_text(request)
+    body = blocks[:-1] if len(blocks) > 1 else blocks
+    text = "\n".join(body)
+    numbers = sorted(_numbers_in(text) - _numbers_in(evidence))
+    roots = sorted(_unsupported_roots(text, evidence))
+    return f"numbers={numbers} roots={roots}"
+
+
 _ORDINAL_STUB = re.compile(r"\d+\.\s*(?:#tarih)?\s*$")
 
 

@@ -9,6 +9,7 @@ from src.services.content_guard import (
     SOURCE_RICH_MIN_CHARS,
     EventRewriteRequest,
     get_source_fact_status,
+    rejection_detail,
     get_relevant_source_sentences,
     has_relevant_source_context,
     resolve_fact_profile,
@@ -646,7 +647,9 @@ class AIService:
                         reasons.append("language")
                     if reasons:
                         rejections.extend(reasons)
-                        logger.warning(f"{label} Model ({model}) rejected: {','.join(reasons)}")
+                        logger.warning(
+                            f"{label} Model ({model}) rejected: {','.join(reasons)} {rejection_detail(blocks, request)}"
+                        )
                         continue
                     context_part = " ".join(blocks[1:-1])
                     question = choose_fallback_question(self.recent_published_texts, request.original_text, context_part)
