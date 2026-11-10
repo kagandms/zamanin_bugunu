@@ -89,9 +89,14 @@ _ABBREVIATION_DOT = re.compile(
 )
 
 
+# Ordinal numbers ("36. padişah"): digits + dot followed by a lowercase letter continue the sentence.
+_ORDINAL_DOT = re.compile(r"\b\d+\.(?=\s+[a-zçğıöşü])")
+
+
 def _complete_sentences(extract: str) -> tuple[str, ...]:
     bounded = extract[:MAX_SOURCE_CHARS]
     protected = _ABBREVIATION_DOT.sub(lambda match: match.group(0)[:-1] + "∯", bounded)
+    protected = _ORDINAL_DOT.sub(lambda match: match.group(0)[:-1] + "∯", protected)
     sentences = re.findall(r"\S.*?[.!?](?:[\"”’)]*)(?=\s|$)", protected, re.DOTALL)
     return tuple(sentence.replace("∯", ".").strip() for sentence in sentences
                  if not re.search(r"(?:\.\.\.|…)", sentence) and not sentence.endswith(".."))

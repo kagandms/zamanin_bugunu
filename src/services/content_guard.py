@@ -368,6 +368,14 @@ def _format_problem(blocks: list[str], emoji_line_present: bool, summary_present
     return not normalize_fact_text(blocks[-1].rstrip()).endswith("?")
 
 
+_ORDINAL_STUB = re.compile(r"\d+\.\s*(?:#tarih)?\s*$")
+
+
+def ends_with_ordinal_stub(text: str) -> bool:
+    """True for a block cut right after an ordinal number ("... 36." or "... 36. #tarih")."""
+    return bool(_ORDINAL_STUB.search(text.strip()))
+
+
 def validate_source_bound_content(
     blocks: list[str],
     request: EventRewriteRequest,
@@ -398,4 +406,6 @@ def validate_source_bound_content(
         reasons.append("loaded_term")
     if _copies_source(body[1:], request):
         reasons.append("copied_source")
+    if any(ends_with_ordinal_stub(block) for block in body):
+        reasons.append("truncated")
     return tuple(reasons)
