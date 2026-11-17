@@ -17,6 +17,7 @@ from src.services.content_guard import (
     validate_event_content,
     validate_source_bound_content,
 )
+from src.services.source_context import complete_sentences
 from src.services.structured_fallback import build_structured_parts, choose_fallback_question
 from src.utils.text_utils import (
     clean_twitter_text,
@@ -652,6 +653,7 @@ class AIService:
                         continue
                     content = self._clean_meta_text(content)
                     emoji_line_present, emoji, blocks, image_prompt = self._parse_source_bound_response(content)
+                    blocks = self._trim_overlong_blocks(blocks, emoji, request.formatted_date, block_limit)
                     reasons = list(validate_source_bound_content(
                         blocks, request, emoji_line_present, max_block_chars=block_limit,
                         summary_present=bool(summary),
@@ -726,6 +728,46 @@ class AIService:
             if choice.replace("️", "") == stripped:
                 return choice
         return DEFAULT_EMOJI
+
+    @staticmethod
+    def _trim_overlong_blocks(
+        blocks: List[str],
+        emoji: str,
+        formatted_date: Optional[str],
+        block_limit: int,
+    ) -> List[str]:
+        """Drop trailing sentences from over-long model body blocks without adding or rewriting text."""
+        if len(blocks) < 2:
+            return blocks
+        header = f"{emoji} Tarihte Bugün ({formatted_date})" if formatted_date else f"{emoji} Tarihte Bugün"
+        header_overhead = len(header) + 2  # "\n\n"
+        trimmed_blocks = list(blocks)
+        for index, block in enumerate(blocks[:-1]):
+            def _assembled_len(text: str, is_first: bool = index == 0) -> int:
+                if not is_first:
+                    return len(text)
+                tag_overhead = 0 if _TAG_TARIH.search(text) else 7  # " #tarih"
+                return header_overhead + len(text) + tag_overhead
+
+            if _assembled_len(block) <= block_limit:
+                continue
+            sentences = complete_sentences(block)
+            if len(sentences) <= 1:
+                continue
+            kept = list(sentences)
+            while len(kept) > 1 and _assembled_len(" ".join(kept)) > block_limit:
+                kept.pop()
+            if len(kept) == len(sentences):
+                continue
+            candidate = " ".join(kept)
+            if _assembled_len(candidate) > block_limit:
+                # First sentence alone exceeds block_limit; do not trim so "length" rejection is preserved.
+                continue
+            assert all(sentence in block for sentence in kept)
+            dropped = len(sentences) - len(kept)
+            trimmed_blocks[index] = candidate
+            logger.info(f"Source-bound trimmed: block={index + 1} dropped_sentences={dropped}")
+        return trimmed_blocks
 
     @staticmethod
     def _assemble_source_bound_parts(
