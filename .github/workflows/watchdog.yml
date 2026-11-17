@@ -1,0 +1,28 @@
+# GitHub emails the account owner when a scheduled workflow fails.
+# Email notifications for GitHub Actions must be enabled in account settings.
+name: Zamanın Bugünü watchdog
+
+on:
+  schedule:
+    # 11:37 Europe/Istanbul (08:37 UTC) and 22:37 Europe/Istanbul (19:37 UTC)
+    - cron: '37 8 * * *'
+    - cron: '37 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check publication slot status
+        run: python scripts/watchdog_check.py --db bot_data.db
