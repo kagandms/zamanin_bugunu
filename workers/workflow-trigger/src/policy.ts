@@ -1,6 +1,7 @@
 export const PUBLICATION_CRON = "7,27,47 * * * *";
 export const ANALYTICS_CRON = "37 * * * *";
 export const MAX_EVENT_AGE_MS = 10 * 60_000;
+const NOON_WEEKDAYS = new Set([0, 4, 5]);
 
 export interface CronEvent {
   readonly cron: string;
@@ -8,7 +9,7 @@ export interface CronEvent {
 }
 export interface Slot {
   readonly day: string;
-  readonly key: "morning" | "evening";
+  readonly key: "morning" | "noon" | "evening";
 }
 export interface DispatchPlan {
   readonly workflow: "schedule.yml" | "analytics.yml";
@@ -28,7 +29,9 @@ export function findSlot(timestamp: number): Slot | null {
   const local = new Date(timestamp + 3 * 3_600_000);
   if (!Number.isFinite(local.getTime())) return null;
   const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const isNoonDay = NOON_WEEKDAYS.has(local.getUTCDay());
   const key = minutes >= 547 && minutes < 667 ? "morning"
+    : isNoonDay && minutes >= 727 && minutes < 847 ? "noon"
     : minutes >= 1207 && minutes < 1327 ? "evening" : null;
   return key ? { day: local.toISOString().slice(0, 10), key } : null;
 }

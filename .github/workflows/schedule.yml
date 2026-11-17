@@ -2,8 +2,8 @@ name: Zamanın Bugünü publication slots
 
 on:
   schedule:
-    # First nominal check is ten minutes after the 09:07 / 20:07 Istanbul target.
-    - cron: '17 6,7,17,18 * * *'
+    # First nominal check is ten minutes after the 09:07 / 12:07 (Thu/Fri/Sun) / 20:07 Istanbul target.
+    - cron: '17 6,7,9,10,17,18 * * *'
   workflow_dispatch:
     inputs:
       trigger_source:

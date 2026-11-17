@@ -327,7 +327,7 @@ def test_workflows_share_lock_and_refresh_checkout_before_running() -> None:
         assert "git switch --detach origin/main" in workflow
         assert "git pull" not in workflow and "--force" not in workflow
     assert "python -m src.main" not in analytics and "TELEGRAM" not in analytics
-    assert "17 6,7,17,18 * * *" in publication and "37 * * * *" in analytics
+    assert "17 6,7,9,10,17,18 * * *" in publication and "37 * * * *" in analytics
 
 
 @pytest.mark.asyncio

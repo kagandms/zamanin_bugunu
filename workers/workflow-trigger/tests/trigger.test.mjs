@@ -23,7 +23,8 @@ function fixture(options = {}) {
 const event = (timestamp = epoch('06:07:00'), cron = PUBLICATION_CRON) => ({ cron, scheduledTime: timestamp });
 
 for (const [time, expected] of [['06:06:59', null], ['06:07:00', 'morning'], ['08:06:59', 'morning'],
-  ['08:07:00', null], ['17:06:59', null], ['17:07:00', 'evening'], ['19:06:59', 'evening'], ['19:07:00', null]]) {
+  ['08:07:00', null], ['09:06:59', null], ['09:07:00', 'noon'], ['11:06:59', 'noon'], ['11:07:00', null],
+  ['17:06:59', null], ['17:07:00', 'evening'], ['19:06:59', 'evening'], ['19:07:00', null]]) {
   test(`half-open slot at ${time}`, () => assert.equal(findSlot(epoch(time))?.key ?? null, expected));
 }
 
@@ -31,16 +32,27 @@ test('UTC/Istanbul midnight never opens a publication window', () => {
   for (const time of ['20:59:59', '21:00:00', '23:59:59', '00:00:00']) assert.equal(findSlot(epoch(time)), null);
 });
 
-test('one day has twelve nominal publication dispatches and twenty-four analytics dispatches', () => {
-  let publication = 0, analytics = 0;
-  for (let minute = 0; minute < 1440; minute++) {
-    const now = epoch('00:00:00') + minute * 60_000;
-    if (planDispatch(event(now), now).status === 'ready') publication++;
-    if (planDispatch(event(now, ANALYTICS_CRON), now).status === 'ready') analytics++;
-  }
-  assert.equal(publication, 12);
-  assert.equal(analytics, 24);
-});
+for (const [day, expectedPublication] of [
+  ['2026-10-12', 12], // Monday
+  ['2026-10-13', 12], // Tuesday
+  ['2026-10-14', 12], // Wednesday
+  ['2026-10-15', 18], // Thursday (noon)
+  ['2026-10-16', 18], // Friday (noon)
+  ['2026-10-17', 12], // Saturday
+  ['2026-10-18', 18], // Sunday (noon)
+]) {
+  test(`${day} has ${expectedPublication} nominal publication dispatches and twenty-four analytics dispatches`, () => {
+    const start = Date.parse(`${day}T00:00:00Z`);
+    let publication = 0, analytics = 0;
+    for (let minute = 0; minute < 1440; minute++) {
+      const now = start + minute * 60_000;
+      if (planDispatch(event(now), now).status === 'ready') publication++;
+      if (planDispatch(event(now, ANALYTICS_CRON), now).status === 'ready') analytics++;
+    }
+    assert.equal(publication, expectedPublication);
+    assert.equal(analytics, 24);
+  });
+}
 
 test('stale cron, future/invalid clock, unknown cron and old day all no-op', () => {
   for (const [scheduled, observed, cron] of [
@@ -176,4 +188,55 @@ test('5xx preserves unknown acceptance state rather than asserting definitive re
   await handleScheduled(event(), ENV, sample.edge);
   assert.equal(sample.records.find(record => record.stage === 'dispatch_result').status, 'unknown');
   assert.equal(sample.requests.length, 1);
+});
+
+for (const [day, expected] of [
+  ['2026-10-12', null],   // Monday
+  ['2026-10-13', null],   // Tuesday
+  ['2026-10-14', null],   // Wednesday
+  ['2026-10-15', 'noon'], // Thursday
+  ['2026-10-16', 'noon'], // Friday
+  ['2026-10-17', null],   // Saturday
+  ['2026-10-18', 'noon'], // Sunday
+]) {
+  test(`noon slot on ${day} at 09:07Z-11:06:59Z returns ${expected}`, () => {
+    for (const time of ['09:07:00', '09:47:00', '10:27:00', '11:06:59']) {
+      const slot = findSlot(Date.parse(`${day}T${time}Z`));
+      assert.equal(slot?.key ?? null, expected);
+      if (expected) assert.equal(slot.day, day);
+    }
+    assert.equal(findSlot(Date.parse(`${day}T09:06:59Z`)), null);
+    assert.equal(findSlot(Date.parse(`${day}T11:07:00Z`)), null);
+  });
+}
+
+test('planDispatch dispatches noon for existing 7,27,47 cron on Thu/Fri/Sun and no-ops otherwise', () => {
+  for (const day of ['2026-10-15', '2026-10-16', '2026-10-18']) {
+    for (const time of ['09:07:00', '09:27:00', '09:47:00', '10:07:00', '10:27:00', '10:47:00']) {
+      const ts = Date.parse(`${day}T${time}Z`);
+      const result = planDispatch(event(ts), ts);
+      assert.equal(result.status, 'ready');
+      assert.equal(result.plan.workflow, 'schedule.yml');
+      assert.equal(result.plan.intended_day, day);
+      assert.equal(result.plan.intended_slot, 'noon');
+    }
+  }
+  for (const day of ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-17']) {
+    const ts = Date.parse(`${day}T09:27:00Z`);
+    assert.deepEqual(planDispatch(event(ts), ts), { status: 'noop', reason: 'outside_intended_window' });
+  }
+  const closed = Date.parse('2026-10-15T11:07:00Z');
+  assert.deepEqual(planDispatch(event(closed), closed), { status: 'noop', reason: 'outside_intended_window' });
+  const late = Date.parse('2026-10-15T10:47:00Z');
+  assert.deepEqual(planDispatch(event(late), late + 20 * 60_000), { status: 'noop', reason: 'stale_or_invalid_event' });
+});
+
+test('handleScheduled sends intended_slot noon on Thursday noon cron', async () => {
+  const now = Date.parse('2026-10-15T09:07:00Z');
+  const sample = fixture({ now });
+  await handleScheduled(event(now), ENV, sample.edge);
+  assert.equal(sample.requests.length, 1);
+  const payload = JSON.parse(sample.requests[0][1].body);
+  assert.equal(payload.inputs.intended_day, '2026-10-15');
+  assert.equal(payload.inputs.intended_slot, 'noon');
 });

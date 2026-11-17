@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.data.models import PlatformPublication, PostHistory, PublicationPart, PublicationSlot, SlotAttempt
 from src.dispatch_metadata import DispatchMetadata, reject_publication_dispatch
 from src.data.repository import as_utc
-from src.publication_policy import ISTANBUL, MAX_DAILY_EVENTS, build_windows, find_open_window, require_utc
+from src.publication_policy import (
+    ISTANBUL, build_windows, experiment_for_slot, find_open_window, max_daily_events, require_utc,
+)
 
 CONSUMING_STATES = ("preparing", "reconciliation_required", "published", "partial", "failed")
 
@@ -80,7 +82,8 @@ class SlotStore:
             raise ValueError("An open slot is required")
         status = "skip_slot_consumed"
         if slot.status == "pending":
-            if await self._budget_used(session, current) >= MAX_DAILY_EVENTS:
+            local_day = current.astimezone(ISTANBUL).date()
+            if await self._budget_used(session, current) >= max_daily_events(local_day):
                 slot.status, slot.reason, status = "skip_daily_limit", "daily_budget_exhausted", "skip_daily_limit"
             else:
                 slot.status, slot.reserved_at, status = "preparing", current, "claimed"
@@ -139,6 +142,11 @@ class SlotStore:
             if slot.status != "preparing" or slot.event_id is not None:
                 raise ValueError("Slot already bound or not owned")
             slot.event_id, slot.status, slot.reason = event_id, "reconciliation_required", "external_effect_possible"
+            experiment = experiment_for_slot(date.fromisoformat(slot.local_day), slot.slot_key)
+            if experiment is not None:
+                post = await session.get(PostHistory, event_id)
+                if post is not None:
+                    post.experiment_id, post.variant = experiment
             await session.commit()
 
     async def confirm_reservation(self, decision: SlotDecision, commit_sha: str) -> None:
@@ -191,11 +199,12 @@ class SlotStore:
 
     async def report(self, timestamp: datetime) -> str:
         """Return today's slot windows, selected event and persistence reference."""
-        day = require_utc(timestamp).astimezone(ISTANBUL).date().isoformat()
+        local_day = require_utc(timestamp).astimezone(ISTANBUL).date()
+        day = local_day.isoformat()
         async with self.factory() as session:
             slots = (await session.scalars(select(PublicationSlot).where(
                 PublicationSlot.local_day == day).order_by(PublicationSlot.target_at))).all()
-            lines = [f"Istanbul day={day}; budget_used={await self._budget_used(session, timestamp)}/2"]
+            lines = [f"Istanbul day={day}; budget_used={await self._budget_used(session, timestamp)}/{max_daily_events(local_day)}"]
             lines.append(await self._artifact_counts(session, timestamp))
             lines.extend(f"slot={slot.slot_key}; target={as_utc(slot.target_at).isoformat()}; "
                 f"closes={as_utc(slot.closes_at).isoformat()}; event={slot.event_id}; status={slot.status}; "
