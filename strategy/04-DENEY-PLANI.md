@@ -23,13 +23,13 @@
 | D-01 | Yargılayıcı kapanış sorusu yerine tarafsız soru (bilgi yoklaması / somut merak / açık uçlu okuma) daha çok yorum üretir | mevcut ↔ tarafsız soru | ~2 hafta |
 | D-02 | Şaşırtıcı detayla açılan hook daha çok durdurur | düz anlatım ↔ şaşırtıcı detay | ~2 hafta |
 | D-03 | Zincirin 2./3./footer parçaları çoğu kişiye ulaşmıyor; footer'ı daha erkene almak takibi artırır | 3+1 ↔ 2+CTA ↔ tek parça | 2-3 hafta |
-| D-04 | Öğle slotu (Per/Paz 12:07) ek değer katar ve diğerlerini bozmaz | 2/gün ↔ 3/gün (yalnız Per/Paz) | 2 hafta |
+| D-04 | Öğle slotu (Per/Cum/Paz 12:07) ek değer katar ve diğerlerini bozmaz | 2/gün ↔ 3/gün (yalnız Per/Cum/Paz) | 2 hafta |
 | D-05 | Görsel çerçeve/tutarlılık hatırlanırlığı artırır | mevcut görsel ↔ marka çerçevesi | 2-3 hafta |
 | D-06 | Etiket kullanımı etkisiz/zararlı | iki etiket ↔ tek ↔ etiketsiz | 2 hafta |
 
 ## D-04 karar kuralı (öğle slotu)
 
-- Süre: 2 hafta, yalnızca Perşembe ve Pazar (yaklaşık 4 öğle gönderisi + normal 2'li akış).
+- Süre: 2 hafta, yalnızca Perşembe, Cuma ve Pazar (yaklaşık 6 öğle gönderisi + normal 2'li akış). Cuma 17 Kasım Insights'ında (Cuma 12–15 tepe saati) eklendi; ilk çalışma Cuma 20 Kasım 12:07.
 - 3. slot kalır, eğer: öğle gönderilerinin medyan 24h görüntülemesi aynı günlerdeki sabah/akşam medyanının en az %80'i **ve** sabah/akşam gönderilerinin medyanı deney öncesine göre %20'den fazla düşmediyse.
 - Örnek küçük (4 gönderi); belirsizse deney 2 hafta daha uzatılır.
 
