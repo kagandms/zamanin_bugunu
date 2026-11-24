@@ -1,14 +1,17 @@
 import type { DispatchPlan } from "./policy.js";
 
 const WORKFLOW_URL = "https://api.github.com/repos/kagandms/zamanin_bugunu/actions/workflows/";
+const SECRET_FORMAT = /^[A-Za-z0-9_.-]+$/;
 export interface DispatchRuntime {
   readonly fetch: typeof fetch;
   readonly token: string;
 }
+export type DispatchErrorName = "TypeError" | "TimeoutError" | "AbortError" | "other";
 export type DispatchResult =
   | { readonly status: "accepted"; readonly httpStatus: number; readonly runId: number | null }
-  | { readonly status: "rejected"; readonly httpStatus: number; readonly retryAfterMs: number | null }
-  | { readonly status: "unknown"; readonly reason: "network_or_timeout" | "server_error"; readonly httpStatus?: number };
+  | { readonly status: "rejected"; readonly httpStatus: number; readonly retryAfterMs: number | null; readonly reason?: "invalid_secret_format" }
+  | { readonly status: "unknown"; readonly reason: "network_or_timeout"; readonly errorName?: DispatchErrorName }
+  | { readonly status: "unknown"; readonly reason: "server_error"; readonly httpStatus?: number };
 
 /** Parse only a documented positive run ID; never forward an untrusted response URL or message. */
 function readRunId(payload: unknown): number | null {
@@ -33,15 +36,24 @@ function retryDelay(response: Response): number | null {
   return milliseconds <= 2000 ? milliseconds : null;
 }
 
+/** Classify thrown error by fixed name only; never expose message, stack, cause, or headers. */
+function classifyError(error: unknown): DispatchErrorName {
+  const name = typeof error === "object" && error !== null && "name" in error ? error.name : undefined;
+  return name === "TypeError" || name === "TimeoutError" || name === "AbortError" ? name : "other";
+}
+
 /** Dispatch once to an allowlisted repo/workflow/ref. Timeout/5xx are ambiguous and never auto-replayed. */
 export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime): Promise<DispatchResult> {
   if (!["schedule.yml", "analytics.yml"].includes(plan.workflow))
     return { status: "rejected", httpStatus: 0, retryAfterMs: null };
   try {
     const { workflow, ...inputs } = plan;
+    const token = runtime.token.trim();
+    if (!SECRET_FORMAT.test(token))
+      return { status: "rejected", httpStatus: 0, retryAfterMs: null, reason: "invalid_secret_format" };
     const response = await runtime.fetch(`${WORKFLOW_URL}${workflow}/dispatches`, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${runtime.token}`,
+      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
         "Content-Type": "application/json" },
       body: JSON.stringify({ ref: "main", inputs }),
@@ -54,8 +66,8 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
         retryAfterMs: response.status === 429 ? retryDelay(response) : null };
     await response.body?.cancel();
     return result;
-  } catch {
+  } catch (error: unknown) {
     // Request/body exceptions may contain the Authorization header; only a fixed code leaves this edge.
-    return { status: "unknown", reason: "network_or_timeout" };
+    return { status: "unknown", reason: "network_or_timeout", errorName: classifyError(error) };
   }
 }

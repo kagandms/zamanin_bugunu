@@ -240,3 +240,70 @@ test('handleScheduled sends intended_slot noon on Thursday noon cron', async () 
   assert.equal(payload.inputs.intended_day, '2026-10-15');
   assert.equal(payload.inputs.intended_slot, 'noon');
 });
+
+test('trims trailing whitespace and newline from token before setting Authorization header', async () => {
+  const sample = fixture();
+  await handleScheduled(event(), { DISPATCH_ENABLED: 'true', GITHUB_DISPATCH_TOKEN: 'mock-token-do-not-log\n ' }, sample.edge);
+  assert.equal(sample.requests.length, 1);
+  assert.equal(sample.requests[0][1].headers.Authorization, 'Bearer mock-token-do-not-log');
+});
+
+test('TypeError from fetch logs errorName TypeError without leaking message or token', async () => {
+  const sample = fixture({ failure: new TypeError('Authorization: mock-token-do-not-log') });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.reason, 'network_or_timeout');
+  assert.equal(result.errorName, 'TypeError');
+  const serialized = JSON.stringify(sample.records);
+  assert.equal(serialized.includes('mock-token-do-not-log'), false);
+  assert.equal(serialized.includes('Authorization'), false);
+});
+
+test('catch classifies TimeoutError, AbortError, and other error names safely', async () => {
+  for (const [failure, expectedErrorName] of [
+    [new DOMException('token-url', 'TimeoutError'), 'TimeoutError'],
+    [new DOMException('aborted', 'AbortError'), 'AbortError'],
+    [new Error('x'), 'other'],
+  ]) {
+    const sample = fixture({ failure });
+    await handleScheduled(event(), ENV, sample.edge);
+    const result = sample.records.find(record => record.stage === 'dispatch_result');
+    assert.equal(result.status, 'unknown');
+    assert.equal(result.reason, 'network_or_timeout');
+    assert.equal(result.errorName, expectedErrorName);
+    assert.equal(JSON.stringify(sample.records).includes('token'), false);
+  }
+});
+
+test('rejects tokens with invalid or non-ASCII characters before fetch without leaking secret', async () => {
+  for (const badToken of [
+    'mock-token\u200B-x',
+    'mock-tokenİ-x',
+    'mock-token\n-x',
+    'mock-token\r-x',
+    'mock\u0000token',
+  ]) {
+    const sample = fixture();
+    await handleScheduled(event(), { DISPATCH_ENABLED: 'true', GITHUB_DISPATCH_TOKEN: badToken }, sample.edge);
+    assert.equal(sample.requests.length, 0);
+    const results = sample.records.filter(record => record.stage === 'dispatch_result');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].status, 'rejected');
+    assert.equal(results[0].httpStatus, 0);
+    assert.equal(results[0].reason, 'invalid_secret_format');
+    const serialized = JSON.stringify(sample.records);
+    assert.equal(serialized.includes(badToken), false);
+    assert.equal(serialized.includes('Authorization'), false);
+  }
+});
+
+test('accepts valid token containing letters, digits, underscore, hyphen, and dot', async () => {
+  const token = 'github_pat_AbC123_x-y.z';
+  const sample = fixture();
+  await handleScheduled(event(), { DISPATCH_ENABLED: 'true', GITHUB_DISPATCH_TOKEN: token }, sample.edge);
+  assert.equal(sample.requests.length, 1);
+  assert.equal(sample.requests[0][1].headers.Authorization, `Bearer ${token}`);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.status, 'accepted');
+});
