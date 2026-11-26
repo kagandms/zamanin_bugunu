@@ -307,3 +307,40 @@ test('accepts valid token containing letters, digits, underscore, hyphen, and do
   const result = sample.records.find(record => record.stage === 'dispatch_result');
   assert.equal(result.status, 'accepted');
 });
+
+test('TypeError from fetch logs redacted errorMessage without leaking token or auth keywords', async () => {
+  const sample = fixture({ failure: new TypeError('Failed to parse header: Authorization: Bearer mock-token-do-not-log in value') });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.reason, 'network_or_timeout');
+  assert.equal(result.errorName, 'TypeError');
+  assert.equal(result.errorMessage.includes('Failed to parse header'), true);
+  assert.equal(result.errorMessage.includes('mock-token-do-not-log'), false);
+  assert.equal(/token|authorization|bearer/i.test(result.errorMessage), false);
+  assert.equal(result.errorMessage.length <= 120, true);
+  assert.equal(JSON.stringify(sample.records).includes('mock-token-do-not-log'), false);
+});
+
+test('long thrown error message is truncated to at most 120 characters', async () => {
+  const sample = fixture({ failure: new Error('a'.repeat(350)) });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.errorMessage.length <= 120, true);
+});
+
+test('control characters like newline and tab in error message are replaced by spaces', async () => {
+  const sample = fixture({ failure: new Error('line1\nline2\tline3') });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.errorMessage.includes('\n'), false);
+  assert.equal(result.errorMessage.includes('\t'), false);
+  assert.equal(result.errorMessage, 'line1 line2 line3');
+});
+
+test('non-Error thrown value yields empty errorMessage and errorName other', async () => {
+  const sample = fixture({ failure: 'boom' });
+  await handleScheduled(event(), ENV, sample.edge);
+  const result = sample.records.find(record => record.stage === 'dispatch_result');
+  assert.equal(result.errorName, 'other');
+  assert.equal(result.errorMessage, '');
+});

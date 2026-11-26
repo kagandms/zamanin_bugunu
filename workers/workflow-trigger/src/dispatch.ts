@@ -10,7 +10,7 @@ export type DispatchErrorName = "TypeError" | "TimeoutError" | "AbortError" | "o
 export type DispatchResult =
   | { readonly status: "accepted"; readonly httpStatus: number; readonly runId: number | null }
   | { readonly status: "rejected"; readonly httpStatus: number; readonly retryAfterMs: number | null; readonly reason?: "invalid_secret_format" }
-  | { readonly status: "unknown"; readonly reason: "network_or_timeout"; readonly errorName?: DispatchErrorName }
+  | { readonly status: "unknown"; readonly reason: "network_or_timeout"; readonly errorName?: DispatchErrorName; readonly errorMessage?: string }
   | { readonly status: "unknown"; readonly reason: "server_error"; readonly httpStatus?: number };
 
 /** Parse only a documented positive run ID; never forward an untrusted response URL or message. */
@@ -36,6 +36,17 @@ function retryDelay(response: Response): number | null {
   return milliseconds <= 2000 ? milliseconds : null;
 }
 
+const REDACTED_WORDS = /token|authorization|bearer/gi;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F]/g;
+
+/** Redact secrets, auth keywords, and control characters from an error message and cap its length. */
+function redactMessage(message: string, secrets: readonly string[]): string {
+  let redacted = message;
+  const uniqueSecrets = [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length);
+  for (const secret of uniqueSecrets) redacted = redacted.replaceAll(secret, "[redacted]");
+  return redacted.replace(REDACTED_WORDS, "[redacted]").replace(CONTROL_CHARS, " ").slice(0, 120);
+}
+
 /** Classify thrown error by fixed name only; never expose message, stack, cause, or headers. */
 function classifyError(error: unknown): DispatchErrorName {
   const name = typeof error === "object" && error !== null && "name" in error ? error.name : undefined;
@@ -46,9 +57,10 @@ function classifyError(error: unknown): DispatchErrorName {
 export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime): Promise<DispatchResult> {
   if (!["schedule.yml", "analytics.yml"].includes(plan.workflow))
     return { status: "rejected", httpStatus: 0, retryAfterMs: null };
+  const rawToken = runtime.token;
+  const token = rawToken.trim();
   try {
     const { workflow, ...inputs } = plan;
-    const token = runtime.token.trim();
     if (!SECRET_FORMAT.test(token))
       return { status: "rejected", httpStatus: 0, retryAfterMs: null, reason: "invalid_secret_format" };
     const response = await runtime.fetch(`${WORKFLOW_URL}${workflow}/dispatches`, {
@@ -67,7 +79,11 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
     await response.body?.cancel();
     return result;
   } catch (error: unknown) {
-    // Request/body exceptions may contain the Authorization header; only a fixed code leaves this edge.
-    return { status: "unknown", reason: "network_or_timeout", errorName: classifyError(error) };
+    // Request/body exceptions may contain the Authorization header; only a fixed code and redacted message leave this edge.
+    const rawMessage = typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+      ? error.message
+      : "";
+    return { status: "unknown", reason: "network_or_timeout", errorName: classifyError(error),
+      errorMessage: redactMessage(rawMessage, [rawToken, token]) };
   }
 }
