@@ -81,7 +81,7 @@ test('fixed workflow repo and main ref, deterministic metadata on duplicate deli
   assert.deepEqual(sample.requests[0], sample.requests[1]);
   const [url, request] = sample.requests[0];
   assert.equal(url, 'https://api.github.com/repos/kagandms/zamanin_bugunu/actions/workflows/schedule.yml/dispatches');
-  assert.equal(request.redirect, 'error');
+  assert.equal(request.redirect, 'manual');
   const payload = JSON.parse(request.body);
   assert.equal(payload.ref, 'main');
   assert.equal(payload.inputs.intended_day, '2026-10-15');
@@ -343,4 +343,13 @@ test('non-Error thrown value yields empty errorMessage and errorName other', asy
   const result = sample.records.find(record => record.stage === 'dispatch_result');
   assert.equal(result.errorName, 'other');
   assert.equal(result.errorMessage, '');
+});
+
+test('dispatch fetch init uses a redirect value the Workers runtime accepts', async () => {
+  const sample = fixture();
+  await handleScheduled(event(), ENV, sample.edge);
+  assert.equal(sample.requests.length, 1);
+  const [, init] = sample.requests[0];
+  assert.ok(['follow', 'manual'].includes(init.redirect));
+  assert.notEqual(init.redirect, 'error');
 });

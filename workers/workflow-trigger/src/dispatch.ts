@@ -64,7 +64,7 @@ export async function dispatchOnce(plan: DispatchPlan, runtime: DispatchRuntime)
     if (!SECRET_FORMAT.test(token))
       return { status: "rejected", httpStatus: 0, retryAfterMs: null, reason: "invalid_secret_format" };
     const response = await runtime.fetch(`${WORKFLOW_URL}${workflow}/dispatches`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
+      method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000),
       headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "zamanin-bugunu-workflow-trigger",
         "Content-Type": "application/json" },
