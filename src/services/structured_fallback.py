@@ -141,13 +141,29 @@ def best_overlap_sentence(event_text: str, sentences: tuple[str, ...]) -> str | 
     return best[1] if best else None
 
 
+def _question_parts(header: str, event: str, summary: str | None, question: str, block_limit: int) -> list[str] | None:
+    """Blocks that carry the question with content; None when nothing fits.
+
+    With a summary sentence: the event alone in block 1, the summary followed by the question in block 2.
+    Without one: a single block, event then question. A question is never left alone in a block.
+    """
+    if summary:
+        lead = f"{header}\n\n{event} #tarih"
+        tail = f"{summary}\n\n{question}"
+        if len(lead) <= block_limit and len(tail) <= block_limit:
+            return [lead, tail]
+    body = f"{event} {summary} #tarih" if summary else f"{event} #tarih"
+    single = f"{header}\n\n{body}\n\n{question}"
+    return [single] if len(single) <= block_limit else None
+
+
 def build_structured_parts(
     request: EventRewriteRequest,
     recent_texts: list[str] | tuple[str, ...],
     header_emoji: str,
     block_limit: int,
 ) -> tuple[list[str], str | None]:
-    """Return [first block, question] and the summary sentence used (if any)."""
+    """Return the blocks and the summary sentence used (if any). The question is never a block on its own."""
     event = request.original_text.strip()
     if event and event[-1] not in ".!?":
         event += "."
@@ -155,6 +171,13 @@ def build_structured_parts(
     if best and ends_with_ordinal_stub(best):
         best = None
     header = f"{header_emoji} Tarihte Bugün ({request.formatted_date})"
+    question = choose_fallback_question(recent_texts, request.original_text, best or "")
+    if question:
+        for summary in ((best, None) if best else (None,)):
+            parts = _question_parts(header, event, summary, question, block_limit)
+            if parts:
+                return parts, summary
+    # No question (memorial), or none fits with it: one plain block, the summary dropped first if too long.
     body = f"{event} {best} #tarih" if best else f"{event} #tarih"
     first = f"{header}\n\n{body}"
     if len(first) > block_limit and best:
@@ -162,5 +185,4 @@ def build_structured_parts(
         first = f"{header}\n\n{event} #tarih"
     if len(first) > block_limit:
         first = first[:block_limit - 3].rstrip() + "..."
-    question = choose_fallback_question(recent_texts, request.original_text, best or "")
-    return ([first, question] if question else [first]), best
+    return [first], best

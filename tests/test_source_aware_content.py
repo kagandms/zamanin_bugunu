@@ -155,7 +155,7 @@ async def test_unprofiled_burak_output_uses_source_fallback_when_models_fail(
     assert "19.10.1975" in rendered
     # The summary sentence repeats the event's subject and role, so only the event and the question remain.
     assert "Burak Güven (19 Ekim 1975" not in rendered
-    assert len(parts) == 2
+    assert len(parts) == 1
     assert "founding" not in rendered.casefold()
     assert "önemli bir yer" not in rendered.casefold()
     assert "sembolik" not in rendered.casefold()
@@ -260,8 +260,8 @@ async def test_fallback_uses_only_relevant_bounded_source_context(
 
     from src.services.structured_fallback import FALLBACK_QUESTIONS
 
-    assert len(parts) == 2
-    assert parts[1] in FALLBACK_QUESTIONS
+    assert len(parts) == 1
+    assert parts[0].rsplit("\n\n", 1)[1] in FALLBACK_QUESTIONS
     assert "Kaynak özeti" not in parts[0]
     assert "Bu paylaşımda" not in parts[0]
     assert len(parts[0]) <= 180

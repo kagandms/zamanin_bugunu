@@ -93,9 +93,8 @@ async def test_unprofiled_fallback_uses_only_the_original_event_without_context(
 
     from src.services.structured_fallback import FALLBACK_QUESTIONS
 
-    assert len(parts) == 2
-    assert parts[0].endswith("Bir karar alındı. #tarih")
-    assert parts[1] in FALLBACK_QUESTIONS
+    assert len(parts) == 1
+    assert any(parts[0].endswith(f"Bir karar alındı. #tarih\n\n{question}") for question in FALLBACK_QUESTIONS)
     assert "Bu paylaşımda" not in parts[0]
     assert service.last_generation_type.endswith(":structured")
     assert service.last_source_fact_status == "not_checked"

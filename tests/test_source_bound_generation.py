@@ -365,11 +365,10 @@ async def test_all_models_failing_gives_code_built_fallback_without_model_text(m
 
     parts, _, _ = await service.rewrite_event_safe(_request())
 
-    assert parts[0] == (
-        "🕊️ Tarihte Bugün (20.10.1921)\n\n"
-        "Ankara Antlaşması imzalandı. Ankara Antlaşması, 1921'de TBMM ile Fransa arasında imzalandı. #tarih"
-    )
-    assert parts[1] in FALLBACK_QUESTIONS
+    assert parts[0] == "🕊️ Tarihte Bugün (20.10.1921)\n\nAnkara Antlaşması imzalandı. #tarih"
+    summary, question = parts[1].rsplit("\n\n", 1)
+    assert summary == "Ankara Antlaşması, 1921'de TBMM ile Fransa arasında imzalandı."
+    assert question in FALLBACK_QUESTIONS
     assert "1923" not in "\n".join(parts)
     assert "masaya" not in "\n".join(parts)
     assert service.last_generation_type.startswith("source_fallback:unsupported_number")

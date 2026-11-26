@@ -67,8 +67,10 @@ async def test_general_introductions_produce_only_the_original_event(
 
     from src.services.structured_fallback import FALLBACK_QUESTIONS
 
-    assert parts[0] == f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{event} #tarih"
-    assert parts[1] in FALLBACK_QUESTIONS
+    assert len(parts) == 1
+    question = parts[0].rsplit("\n\n", 1)[1]
+    assert question in FALLBACK_QUESTIONS
+    assert parts[0] == f"🕊️ Tarihte Bugün ({request.formatted_date})\n\n{event} #tarih\n\n{question}"
     assert request.source_context is None
     assert request.source_url is None
 
@@ -178,7 +180,7 @@ async def test_explicit_other_year_rejects_same_named_wrong_event(
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
     assert request.source_context is None
-    assert len(parts) == 2
+    assert len(parts) == 1
     assert "Kaynak özeti" not in parts[0]
 
 
@@ -206,7 +208,7 @@ async def test_empty_incomplete_or_ambiguous_context_does_not_add_a_second_part(
 
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
-    assert len(parts) == 2
+    assert len(parts) == 1
     assert "Kaynak özeti" not in parts[0]
     assert "Bu paylaşımda" not in parts[0]
 

@@ -154,5 +154,6 @@ async def test_ai_path_uses_a_general_question_when_the_second_part_has_no_detai
 
     parts, _, _ = await AIService().rewrite_event_safe(request)
 
-    assert parts[-1] in GENERAL_QUESTIONS
-    assert parts[-1] != DETAIL_QUESTION
+    question = parts[-1].rsplit("\n\n", 1)[1]
+    assert question in GENERAL_QUESTIONS
+    assert question != DETAIL_QUESTION
