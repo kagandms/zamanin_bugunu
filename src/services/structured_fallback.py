@@ -25,9 +25,10 @@ OPEN_QUESTIONS: tuple[str, ...] = (
     "Sizce bu olay tarih kitaplarında nasıl anlatılıyor?",
 )
 EVENT_QUESTIONS: tuple[str, ...] = GENERAL_QUESTIONS + (DETAIL_QUESTION,) + OPEN_QUESTIONS
-# "Do you know this name?" is only for little-known people; leaders and famous figures get the neutral one.
+# "Do you know this name?" was dropped: the code cannot tell little-known people from famous ones, and it
+# read as nonsense for figures like Maradona. Every person record gets the neutral question.
 KNOWN_PERSON_QUESTIONS: tuple[str, ...] = ("Bu kişi hakkında ne biliyordunuz?",)
-PERSON_QUESTIONS: tuple[str, ...] = KNOWN_PERSON_QUESTIONS + ("Bu ismi tanıyor muydunuz?",)
+PERSON_QUESTIONS: tuple[str, ...] = KNOWN_PERSON_QUESTIONS
 LEADER_ROOTS: tuple[str, ...] = (
     "cumhurbaskan", "basbakan", "padisah", "halife", "kral", "imparator", "maresal", "baskomutan", "kurucu",
 )

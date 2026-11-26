@@ -92,5 +92,6 @@ def test_person_question_bank_excludes_recognition_for_leaders() -> None:
     assert "Bu ismi tanıyor muydunuz?" not in leader_bank
     assert "Bu kişi hakkında ne biliyordunuz?" in leader_bank
     plain_bank = question_bank("Karındeşen Jack cinayetleri işledi, doğdu.", "")
-    assert "Bu ismi tanıyor muydunuz?" in plain_bank
+    assert "Bu ismi tanıyor muydunuz?" not in plain_bank
+    assert "Bu kişi hakkında ne biliyordunuz?" in plain_bank
     assert "Bu kişiyi daha önce duymuş muydunuz?" not in plain_bank
