@@ -373,3 +373,18 @@ def test_d04_passes_and_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     out_fail = capsys.readouterr().out
     assert rc_fail == 0
     assert "KALDI" in out_fail
+
+
+@pytest.mark.parametrize(
+    ("generation_type", "expected"),
+    [
+        ("ai_source_bound", "ai"),
+        ("source_fallback:http_error,unsupported_words:structured", "fallback"),
+        (None, "(belirtilmemiş)"),
+        ("", "(belirtilmemiş)"),
+        ("manual_custom", "manual_custom"),
+    ],
+)
+def test_generation_family_groups_reasons_into_families(generation_type: str | None, expected: str) -> None:
+    module = _load_weekly_report()
+    assert module._generation_family(generation_type) == expected

@@ -190,6 +190,19 @@ class ThreadsService:
         if authorize is not None and not await authorize():
             return ContainerReadiness("window_closed", "skip_window_closed"), None, False, "skip_window_closed"
         post_id, is_uncertain, error = await self._publish_container(container_id)
+        if (
+            post_id is None
+            and not is_uncertain
+            and error is not None
+            and error.startswith("publish_rejected")
+            and "4279009" in error
+        ):
+            # Meta rejects a publish that arrives before the container propagates; the rejection
+            # means nothing was published, so one retry of the same container cannot duplicate a post.
+            await asyncio.sleep(5)
+            if authorize is not None and not await authorize():
+                return ContainerReadiness("window_closed", "skip_window_closed"), None, False, "skip_window_closed"
+            post_id, is_uncertain, error = await self._publish_container(container_id)
         return current_readiness, post_id, is_uncertain, error
 
     async def post_thread(

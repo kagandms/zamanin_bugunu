@@ -209,6 +209,12 @@ def provider_budget_seconds(provider: str, cascade: List[Tuple[str, str, str]]) 
     own = GEMINI_BUDGET_WEIGHT if provider == "gemini" else 1.0
     return SOURCE_BOUND_TIME_BUDGET_SECONDS * own / sum(weights)
 
+def _is_question_only_block(text: str) -> bool:
+    """Return True when text is a short standalone question without periods."""
+    stripped = text.strip()
+    return stripped.endswith("?") and len(stripped) <= 120 and "." not in stripped
+
+
 class AIService:
     def __init__(self) -> None:
         self.api_key = settings.OPENROUTER_API_KEY.get_secret_value() if settings.OPENROUTER_API_KEY else ""
@@ -924,6 +930,10 @@ class AIService:
             tweets = [p.strip() for p in content.split("---") if p.strip()]
         else:
             tweets = [content]
+
+        # A closing question the model wrote as its own block must never stand alone.
+        if len(tweets) >= 2 and _is_question_only_block(tweets[-1]):
+            tweets = tweets[:-2] + [tweets[-2] + "\n\n" + tweets[-1]]
 
         # Enforce maximum 3 content blocks (Header, Story, Conclusion/Question)
         if len(tweets) > 3:

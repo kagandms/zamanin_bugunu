@@ -452,6 +452,17 @@ def format_d04_section(all_posts: Sequence[PostRow]) -> Optional[list[str]]:
     return lines
 
 
+def _generation_family(generation_type: str | None) -> str:
+    """Group generation_type values into coarse reporting families."""
+    if not generation_type:
+        return "(belirtilmemiş)"
+    if generation_type.startswith("ai_"):
+        return "ai"
+    if "fallback" in generation_type:
+        return "fallback"
+    return generation_type
+
+
 def build_report(
     all_posts: Sequence[PostRow],
     db_path: Path,
@@ -533,9 +544,9 @@ def build_report(
         lines.extend(format_summary_section("Dönem", period_stats))
 
     # By generation_type
-    gen_types = sorted({p.generation_type or "(belirtilmemiş)" for p in window_posts})
+    gen_types = sorted({_generation_family(p.generation_type) for p in window_posts})
     gen_stats = [
-        compute_summary(g, [p for p in window_posts if (p.generation_type or "(belirtilmemiş)") == g])
+        compute_summary(g, [p for p in window_posts if _generation_family(p.generation_type) == g])
         for g in gen_types
     ]
     if gen_stats:
